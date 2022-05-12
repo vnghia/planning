@@ -144,3 +144,7 @@ This paper studies a general MDP with partial observable state space (so this is
 ## Introduction to Stochastic Dynamic Programming
 
 ![[articles/Introduction to Stochastic Dynamic Programming.pdf]]
+
+## ULC Course on RL
+
+<https://www.davidsilver.uk/teaching>
