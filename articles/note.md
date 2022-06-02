@@ -145,6 +145,54 @@ This paper studies a general MDP with partial observable state space (so this is
 
 ![[articles/Introduction to Stochastic Dynamic Programming.pdf]]
 
+### General problem
+#### Notion
+- Time span of length $n$.
+- $A$: set of all possible actions
+- $R(i, a)$: reward at state $i$ by action $a$
+- $P_{ij}(a)$: probability moving to state $i$ from $j$ after doing $a$.
+- $V_{n}(i)$: maximum expected return for an $n$-stage problem that starts in state $i$.
+
+#### $n = 1$
+$$
+V_{1}(i) = \max_{a \in A} R(i, a)
+$$
+
+#### Induction
+
+$$
+V_{n}(i) = \max_{a \in A} [R(i, a) + \sum_{j} P_{ij}(a) V_{n - 1}(j)]
+$$
+
+#### Supermodular
+
+##### Definition
+
+$$
+g(x_{1}, y_{1}) + g(x_{2}, y_{2}) \ge g(x_{1}, y_{2}) + g(x_{2}, y_{1}) \ \forall \ x_{1} > x_{2}, \ y_{1} > y_{2}
+$$
+
+##### Condition
+
+$$
+\frac{\partial^{2}g(x, y)}{\partial x \partial y} \ge 0 
+$$
+
+### Discounted dynamic programming
+#### Notion
+- $A$: set of all possible actions.
+- $R(i, a)$: expected reward in state $i$ and action $a$.
+- $P_{ij}(a)$: probabilities of transition to the next state.
+- Stationary policy $\iff$ action choosen at time $t$ depends on the state only. (non-randomized).
+- $X_{n}$: state at time n.
+-  $V_{\pi}(i) = E_{\pi} \left[ \sum_{n = 0}^{\infty} R(X_{n}, a_{n}) \alpha^{n} | X_{0} = i \right]$
+
+#### Optimal
+- $V(i) = \sup_{\pi} V_{\pi}(i)$
+- $V_{\pi^{*}}(i) = V(i) \ \forall \ i \ge 0$ ($\alpha$-optimal)
+- $V(i) = \max_{a} \left[ R(i, a) + \alpha \sum_{j} P_{ij}(a) V(j) \right]$
+- $R(i, f(i)) + \alpha \sum_{j} P_{ij}(f(i)) V(j) = \max_{a} \left[ R(i, a) + \alpha \sum_{j} P_{ij}(a) V(j) \right] \iff f \text{ is optimal}$
+- $V_{g}(i) = R(i, g(i)) + \alpha \sum_{j} P_{ij} (g(i)) V_{g}(j)$
 ## ULC Course on RL
 
 <https://www.davidsilver.uk/teaching>
