@@ -1,13 +1,14 @@
 from collections import defaultdict
 
+import gym
 import matplotlib.pyplot as plt
 import numpy as np
+from gym import spaces
 from matplotlib import colors
 
 
-class Env:
-    def __init__(self, c1, c2, p1_u, p2_u, p1_d, p2_d, max_L1, max_L2, seed=42):
-        self.seed = seed
+class Env(gym.Env):
+    def __init__(self, c1, c2, p1_u, p2_u, p1_d, p2_d, max_L1, max_L2) -> None:
 
         self.c1 = c1
         self.c2 = c2
@@ -17,17 +18,16 @@ class Env:
         self.p1_d = p1_d
         self.p2_d = p2_d
 
-        self.actions = [0, 1]
-        self.n_action = len(self.actions)
         self.max_L1 = max_L1
         self.max_L2 = max_L2
+
+        self.n_action = 2
         self.dim_state = (self.max_L1 + 1, self.max_L2 + 1)
-        self.n_state = (self.max_L1 + 1) * (self.max_L2 + 1) - 1
 
-        # [p1_u, p2_u, p1_d, p2_d, p]
-        self.transitions = [(1, 0), (0, 1), (-1, 0), (0, -1), (0, 0)]
+        self.observation_space = spaces.MultiDiscrete(self.dim_state)
+        self.action_space = spaces.Discrete(self.n_action)
 
-        self.reset()
+        self.transitions = np.asarray([[1, 0], [0, 1], [-1, 0], [0, -1], [0, 0]])
 
     def optimal(self):
         if self.c1 / self.p1_d > self.c2 / self.p2_d:
@@ -35,41 +35,36 @@ class Env:
         else:
             return 1
 
-    def reset(self):
-        self.rng = np.random.default_rng(self.seed)
-        self.L1 = 0
-        self.L2 = 0
-        self.state = (self.L1, self.L2)
-        self.rewards = [self.reward()]
-        self.n_visit = defaultdict(int)
+    def reset(self, seed=None, return_info=False, options=None):
+        super().reset(seed=seed)
 
-        return self.state, self.rewards[-1], False
+        self.state = np.zeros(self.observation_space.shape, dtype=np.int_)
+        self.rewards = []
+
+        observation = self.state
+        return (observation, None) if return_info else observation
 
     def reward(self):
-        return -(self.c1 * self.L1 + self.c2 * self.L2)
+        return -(self.c1 * self.state[0] + self.c2 * self.state[1])
 
     def step(self, action):
         self.rewards.append(self.reward())
 
-        p1_u = self.p1_u * (self.L1 < self.max_L1)
-        p2_u = self.p2_u * (self.L2 < self.max_L2)
-        p1_d = self.p1_d * (action == 0) * (self.L1 > 0)
-        p2_d = self.p2_d * (action == 1) * (self.L2 > 0)
+        p1_u = self.p1_u * (self.state[0] < self.max_L1)
+        p2_u = self.p2_u * (self.state[1] < self.max_L2)
+        p1_d = self.p1_d * (action == 0) * (self.state[0] > 0)
+        p2_d = self.p2_d * (action == 1) * (self.state[1] > 0)
 
-        next_trans = self.rng.choice(
+        transition = self.np_random.choice(
             len(self.transitions),
             1,
             p=[p1_u, p2_u, p1_d, p2_d, 1 - p1_u - p1_d - p2_u - p2_d],
         )
-        self.L1 += self.transitions[next_trans[0]][0]
-        self.L2 += self.transitions[next_trans[0]][1]
-        self.state = (self.L1, self.L2)
-        return self.state, self.rewards[-1], False
+        self.state += self.transitions[transition[0]]
 
-    def random_action(self):
-        return self.rng.choice(self.actions)
+        return self.state, self.rewards[-1], False, None
 
-    def train(
+    def train_Q(
         self,
         epoch=1,
         gamma=0.9,
@@ -78,25 +73,28 @@ class Env:
         ls=1000000,
         lr_pow=0.51,
         save_Q=False,
+        seed=42,
     ):
         Q = np.zeros(self.dim_state + (self.n_action,))
         Q_avg = np.empty([2, epoch * ls])
+        self.n_visit = defaultdict(int)
         if save_Q:
-            Qs = np.empty(self.dim_state + (self.n_action, epoch * ls))
+            Qs = np.empty(Q.shape + (epoch * ls,))
 
         for i in range(epoch):
-            state, reward, _ = self.reset()
+            state = tuple(self.reset(seed=seed))
             for j in range(ls):
                 if state[0] == 0:
                     action = 1
                 elif state[1] == 0:
                     action = 0
-                elif self.rng.uniform() < eps:
-                    action = self.random_action()
+                elif self.np_random.uniform() < eps:
+                    action = self.action_space.sample()
                 else:
                     action = np.argmax(Q[state])
 
-                next_state, reward, _ = self.step(action)
+                next_state, reward, _, _ = self.step(action)
+                next_state = tuple(next_state)
 
                 next_q = 0
                 if next_state[0] == 0:
@@ -132,7 +130,7 @@ class Env:
         self.Q_avg = Q_avg
         self.policy = policy
 
-    def show_policy(self, ax=None, info=""):
+    def show_Q_policy(self, ax=None, info=""):
         ax = ax or plt.axes()
         fig = ax.get_figure()
         cmap = colors.ListedColormap(["lightgray", "black"])
@@ -151,20 +149,20 @@ class Env:
 
         ax.set_title(f"Optimal policy - Optimal action {self.optimal()}{info}")
 
-    def show_Q(self, ax=None, info=""):
+    def show_Q_avg(self, ax=None, info=""):
         ax = ax or plt.axes()
         ax.plot(self.Q_avg[0], label="action 0", alpha=0.5)
         ax.plot(self.Q_avg[1], label="action 1", alpha=0.5)
         ax.set_title(f"Q-learning value - Optimal action {self.optimal()}{info}")
         ax.legend()
 
-    def show_Qs(self, ax=None, info=""):
-        ax = ax or plt.axes()
+    def show_Q_tables(self, info=""):
         for i, qs in enumerate(self.Qs):
             for j, q in enumerate(qs):
-                ax.plot(q[0], label="action 0", alpha=0.5)
-                ax.plot(q[1], label="action 1", alpha=0.5)
-                ax.legend()
-                ax.set_title(
+                plt.plot(q[0], label="action 0", alpha=0.5)
+                plt.plot(q[1], label="action 1", alpha=0.5)
+                plt.legend()
+                plt.title(
                     f"L1 = {i} - L2 = {j} - Optimal action {self.optimal()}{info}"
                 )
+                plt.show()
