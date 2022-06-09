@@ -165,4 +165,6 @@ class Env:
                 ax.plot(q[0], label="action 0", alpha=0.5)
                 ax.plot(q[1], label="action 1", alpha=0.5)
                 ax.legend()
-                ax.set_title(f"L1 = {i} L2 = {j}")
+                ax.set_title(
+                    f"L1 = {i} - L2 = {j} - Optimal action {self.optimal()}{info}"
+                )
