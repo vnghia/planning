@@ -157,3 +157,12 @@ class Env:
         ax.plot(self.Q_avg[1], label="action 1", alpha=0.5)
         ax.set_title(f"Q-learning value - Optimal action {self.optimal()}{info}")
         ax.legend()
+
+    def show_Qs(self, ax=None, info=""):
+        ax = ax or plt.axes()
+        for i, qs in enumerate(self.Qs):
+            for j, q in enumerate(qs):
+                ax.plot(q[0], label="action 0", alpha=0.5)
+                ax.plot(q[1], label="action 1", alpha=0.5)
+                ax.legend()
+                ax.set_title(f"L1 = {i} L2 = {j}")
