@@ -18,6 +18,8 @@ endif()
 set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -DFASTOR_ENABLE_RUNTIME_CHECKS=0 -march=native -ffast-math")
 
+find_package (Eigen3 REQUIRED NO_MODULE)
+
 add_subdirectory(Fastor)
 add_subdirectory(dbg-macro)
 
