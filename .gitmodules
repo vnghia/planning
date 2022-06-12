@@ -1,0 +1,6 @@
+[submodule "dbg-macro"]
+	path = dbg-macro
+	url = https://github.com/sharkdp/dbg-macro.git
+[submodule "Fastor"]
+	path = Fastor
+	url = https://github.com/romeric/Fastor.git
