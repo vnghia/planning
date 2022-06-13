@@ -11,11 +11,13 @@
 
 using int_type = int;
 
-template <int_type n_queue_t, typename F, int_type... max_ls>
+template <int_type n_queue_t, typename F, bool save_qs_t, int_type... max_ls>
 class Env {
  public:
   static constexpr int_type n_queue = n_queue_t;
   static constexpr int_type n_transition = 2 * n_queue + 1;
+  static constexpr int_type n_total = ((max_ls + 1) * ...) * n_queue;
+  static constexpr bool save_qs = save_qs_t;
 
   using float_type = F;
 
@@ -33,8 +35,7 @@ class Env {
   using array_it_type = Fastor::Tensor<float_type, n_transition>;
 
   static constexpr std_array_i_type dim_ls = {max_ls + 1 ...};
-  static constexpr std::array<size_t, n_queue + 1> q_dim = {max_ls + 1 ...,
-                                                            n_queue};
+
   static constexpr auto iota_nq = ([]() {
     std_array_i_type a;
     std::iota(a.begin(), a.end(), 0);
@@ -122,6 +123,10 @@ class Env {
              float_type lr_pow = 0.51) {
     reset_train();
 
+    if constexpr (save_qs) {
+      qs_.resize(epoch * ls * n_total);
+    }
+
     for (int_type i = 0; i < epoch; ++i) {
       reset();
 
@@ -168,6 +173,12 @@ class Env {
             std::pow(std::apply(n_visit_, st_index) + 1, -lr_pow);
         std::apply(q_, st_index) +=
             lr * (reward + gamma * nq - std::apply(q_, st_index));
+
+        if constexpr (save_qs) {
+          std::copy(q_.data(), q_.data() + n_total,
+                    qs_.begin() + i * ls + j * n_total);
+        }
+
         std::apply(n_visit_, st_index) += 1;
         states_ = nstates;
       }
@@ -176,6 +187,7 @@ class Env {
 
   const tensor_f_type& q() const { return q_; }
   const tensor_i_type& n_visit() const { return n_visit_; }
+  const std_vector_f_type& qs() const { return qs_; }
 
  protected:
   array_fq_type cs_;
@@ -191,6 +203,7 @@ class Env {
 
   tensor_f_type q_;
   tensor_i_type n_visit_;
+  std_vector_f_type qs_;
 
   std::mt19937_64 rng;
   std::uniform_real_distribution<float_type> eps_dis;

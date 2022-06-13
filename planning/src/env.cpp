@@ -12,7 +12,31 @@ using namespace nb::literals;
 
 template <typename T, int_type... i>
 constexpr auto gen_shape(std::integer_sequence<int_type, i...>) {
-  return nb::shape<T::dim_ls[i]..., T::n_queue>{};
+  return nb::shape<T::q_dim[i]...>{};
+}
+
+template <typename env_type, typename data_type, typename vec_type,
+          int_type... i>
+constexpr auto gen_q(const vec_type &v, std::integer_sequence<int_type, i...>) {
+  constexpr auto dim = std::array<size_t, env_type::n_queue + 1>{
+      env_type::dim_ls[i]..., env_type::n_queue};
+  return nb::tensor<nb::numpy, data_type,
+                    nb::shape<env_type::dim_ls[i]..., env_type::n_queue>>(
+      v.data(), env_type::n_queue + 1, dim.data());
+}
+
+template <typename env_type, typename data_type, typename vec_type,
+          int_type... i>
+constexpr auto gen_qs(const vec_type &v,
+                      std::integer_sequence<int_type, i...>) {
+  const auto n_first = v.size() / env_type::n_total;
+  return nb::tensor<
+      nb::numpy, data_type,
+      nb::shape<nb::any, env_type::dim_ls[i]..., env_type::n_queue>>(
+      const_cast<data_type *>(v.data()), env_type::n_queue + 2,
+      std::array<size_t, env_type::n_queue + 2>{n_first, env_type::dim_ls[i]...,
+                                                env_type::n_queue}
+          .data());
 }
 
 template <typename env_type>
@@ -26,38 +50,42 @@ constexpr auto gen_env(nb::module_ &m, const std::string &name) {
       .def_property_readonly(
           "q",
           [](const env_type &e) {
-            return nb::tensor<nb::numpy, typename env_type::float_type,
-                              decltype(gen_shape<env_type>(env_type::idx_nq))>(
-                e.q().data(), env_type::n_queue + 1, env_type::q_dim.data());
+            return gen_q<env_type, typename env_type::float_type>(
+                e.q(), env_type::idx_nq);
           })
-      .def_property_readonly("n_visit", [](const env_type &e) {
-        return nb::tensor<nb::numpy, int_type,
-                          decltype(gen_shape<env_type>(env_type::idx_nq))>(
-            e.n_visit().data(), env_type::n_queue + 1, env_type::q_dim.data());
+      .def_property_readonly("n_visit",
+                             [](const env_type &e) {
+                               return gen_q<env_type, int_type>(
+                                   e.n_visit(), env_type::idx_nq);
+                             })
+      .def_property_readonly("qs", [](const env_type &e) {
+        return gen_qs<env_type, typename env_type::float_type>(
+            e.qs(), env_type::idx_nq);
       });
 }
 
-template <int_type i, int_type j>
+template <bool save_q, int_type i, int_type j>
 constexpr auto gen_linear_env(nb::module_ &m) {
-  using env_type = Env<2, double, i, j>;
-  gen_env<Env<2, double, i, j>>(
-      m, "linear_env_" + std::to_string(i) + "_" + std::to_string(j));
+  gen_env<Env<2, double, save_q, i, j>>(
+      m, "linear_env_" + std::to_string(save_q) + "_" + std::to_string(i) +
+             "_" + std::to_string(j));
 }
 
-template <int_type i, int_type... j>
+template <bool save_q, int_type i, int_type... j>
 constexpr auto gen_linear_env_1d(nb::module_ &m,
                                  std::integer_sequence<int_type, j...>) {
-  (gen_linear_env<i, j + 2>(m), ...);
+  (gen_linear_env<save_q, i, j + 2>(m), ...);
 }
 
 template <int_type... i, int_type... j>
 constexpr auto gen_linear_env_2d(nb::module_ &m,
                                  std::integer_sequence<int_type, i...>,
                                  std::integer_sequence<int_type, j...> js) {
-  (gen_linear_env_1d<i + 2>(m, js), ...);
+  (gen_linear_env_1d<true, i + 2>(m, js), ...);
+  (gen_linear_env_1d<false, i + 2>(m, js), ...);
 }
 
 NB_MODULE(planning_ext, m) {
-  gen_linear_env_2d(m, std::make_integer_sequence<int_type, 20>{},
-                    std::make_integer_sequence<int_type, 20>{});
+  gen_linear_env_2d(m, std::make_integer_sequence<int_type, 15>{},
+                    std::make_integer_sequence<int_type, 15>{});
 }
