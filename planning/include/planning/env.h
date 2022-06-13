@@ -4,12 +4,11 @@
 #include <cmath>
 #include <limits>
 #include <random>
-#include <ranges>
-#include <typeinfo>
-#include <unsupported/Eigen/CXX11/Tensor>
 #include <utility>
+#include <vector>
 
 #include "Fastor/Fastor.h"
+#include "unsupported/Eigen/CXX11/Tensor"
 
 using IT = int;
 
@@ -19,6 +18,7 @@ class Env {
   using ArrayQF = Fastor::Tensor<F, n_queue>;
   using ArrayQI = Fastor::Tensor<IT, n_queue>;
   using ArrayQB = Fastor::Tensor<bool, n_queue>;
+  using STDVectorF = std::vector<F>;
   using STDArrayQI = std::array<IT, n_queue>;
   using TensorQF = Fastor::Tensor<F, max_ls + 1 ..., n_queue>;
   using TensorQI = Fastor::Tensor<IT, max_ls + 1 ..., n_queue>;
@@ -106,7 +106,7 @@ class Env {
   static inline const ArrayQI max_ls_ = max_ls_a_;
 
  public:
-  Env(const ArrayQF& cs, const ArrayQF& pus, const ArrayQF& pds)
+  Env(const STDVectorF& cs, const STDVectorF& pus, const STDVectorF& pds)
       : Qme_(Q_.data(), max_ls + 1 ..., n_queue),
         cs_(cs),
         pus_(pus),

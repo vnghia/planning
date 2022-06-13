@@ -634,6 +634,12 @@ rsconnect/
 # R package: bookdown caching files
 /*_files/
 
+### vcpkg ###
+# Vcpkg
+
+## Manifest Mode
+vcpkg_installed/
+
 ### VisualStudioCode ###
 .vscode/
 
