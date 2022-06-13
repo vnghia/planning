@@ -9,203 +9,216 @@
 
 #include "Fastor/Fastor.h"
 
-using IT = int;
+using int_type = int;
 
-template <IT n_queue, typename F, IT... max_ls>
+template <int_type n_queue_t, typename F, int_type... max_ls>
 class Env {
  public:
-  using ArrayQF = Fastor::Tensor<F, n_queue>;
-  using ArrayQI = Fastor::Tensor<IT, n_queue>;
-  using ArrayQB = Fastor::Tensor<bool, n_queue>;
-  using STDVectorF = std::vector<F>;
-  using STDArrayQI = std::array<IT, n_queue>;
-  using TensorQF = Fastor::Tensor<F, max_ls + 1 ..., n_queue>;
-  using TensorQI = Fastor::Tensor<IT, max_ls + 1 ..., n_queue>;
+  static constexpr int_type n_queue = n_queue_t;
+  static constexpr int_type n_transition = 2 * n_queue + 1;
 
- private:
-  template <typename T, typename L, IT... i>
-  static constexpr auto to_index(const T& a, const L& l,
-                                 std::integer_sequence<IT, i...>) {
-    return std::make_tuple(a(i)..., l);
-  }
+  using float_type = F;
 
-  template <IT current, STDArrayQI l, IT... before, IT... after>
-  static constexpr auto gen_inf_index(std::integer_sequence<IT, before...>,
-                                      std::integer_sequence<IT, after...>) {
-    return std::make_tuple(Fastor::fseq<0, l[before] + 1>{}...,
-                           Fastor::fseq<0, 1>{},
-                           Fastor::seq(0, l[after + current + 1] + 1)...,
-                           Fastor::fseq<current, current + 1>{});
-  }
+  using array_fq_type = Fastor::Tensor<float_type, n_queue>;
+  using array_iq_type = Fastor::Tensor<int_type, n_queue>;
+  using array_bq_type = Fastor::Tensor<bool, n_queue>;
 
-  template <STDArrayQI l, IT... i>
-  static constexpr auto gen_inf_indices(std::integer_sequence<IT, i...> is) {
-    return std::make_tuple(gen_inf_index<i, l>(
-        std::make_integer_sequence<IT, i>{},
-        std::make_integer_sequence<IT, is.size() - i - 1>{})...);
-  }
+  using std_vector_f_type = std::vector<float_type>;
+  using std_array_i_type = std::array<int_type, n_queue>;
 
-  template <IT... i>
-  static constexpr auto gen_index_0(std::integer_sequence<IT, i...> is) {
-    std::array<IT, is.size()> a;
-    std::fill(a.begin(), a.end(), 0);
-    return std::make_tuple(a[i]...);
-  }
+  using tensor_f_type = Fastor::Tensor<float_type, max_ls + 1 ..., n_queue>;
+  using tensor_i_type = Fastor::Tensor<int_type, max_ls + 1 ..., n_queue>;
 
-  static constexpr STDArrayQI max_ls_a_ = {max_ls...};
-  static constexpr auto iota_queue_ = ([]() {
-    STDArrayQI a;
+  using array_ft_type = Fastor::Tensor<float_type, n_transition>;
+  using array_it_type = Fastor::Tensor<float_type, n_transition>;
+
+  static constexpr std_array_i_type dim_ls = {max_ls + 1 ...};
+  static constexpr auto iota_nq = ([]() {
+    std_array_i_type a;
     std::iota(a.begin(), a.end(), 0);
     return a;
   })();
-  static constexpr auto index_queue_ =
-      std::make_integer_sequence<IT, n_queue>{};
-  static constexpr auto Q_indices_ = gen_inf_indices<max_ls_a_>(index_queue_);
-  static constexpr auto index_queue_1_ =
-      std::make_integer_sequence<IT, n_queue + 1>{};
 
-  static constexpr IT n_transition_ = 2 * n_queue + 1;
-  using ArrayTF = Fastor::Tensor<F, n_transition_>;
-  using ArrayTI = Fastor::Tensor<F, n_transition_>;
-  static const inline auto transitions_ = ([]() {
-    Fastor::Tensor<IT, n_queue, n_queue> tu;
-    tu.zeros();
-    Fastor::diag(tu) = 1;
-
-    Fastor::Tensor<IT, n_queue, n_queue> td;
-    td.zeros();
-    Fastor::diag(td) = -1;
-
-    Fastor::Tensor<IT, n_transition_, n_queue> result;
-    result(Fastor::fseq<0, n_queue>{}, Fastor::all) = tu;
-    result(Fastor::fseq<n_queue, 2 * n_queue>{}, Fastor::all) = td;
-    result(n_transition_ - 1, Fastor::all) = 0;
-    return result;
-  })();
-
-  static const inline ArrayQI actions_ = iota_queue_;
-
-  ArrayQI states_;
-
-  TensorQF Q_;
-  TensorQI n_visit_;
-
-  std::mt19937_64 rng;
-  std::uniform_real_distribution<F> eps_dis;
-
- protected:
-  ArrayQF cs_;
-  ArrayQF pus_;
-  ArrayQF pds_;
-
-  static inline const ArrayQI max_ls_ = max_ls_a_;
+  static constexpr auto idx_nq =
+      std::make_integer_sequence<int_type, n_queue>{};
+  static constexpr auto idx_nq_1 =
+      std::make_integer_sequence<int_type, n_queue + 1>{};
+  static constexpr auto inf_idxs = gen_inf_indices<dim_ls>(idx_nq);
 
  public:
-  Env(const STDVectorF& cs, const STDVectorF& pus, const STDVectorF& pds)
+  Env(const std_vector_f_type& cs, const std_vector_f_type& pus,
+      const std_vector_f_type& pds)
       : cs_(cs), pus_(pus), pds_(pds) {}
 
-  void ResetTrain() {
-    Q_.zeros();
+  void reset_train() {
+    q_.zeros();
     std::apply(
         [this](auto&&... indices) {
-          ((std::apply(this->Q_, indices) =
-                -std::numeric_limits<F>::infinity()),
+          ((std::apply(this->q_, indices) =
+                -std::numeric_limits<float_type>::infinity()),
            ...);
         },
-        Q_indices_);
-    std::apply(Q_, gen_index_0(index_queue_1_)) = 0;
+        inf_idxs);
+    std::apply(q_, gen_index_0(idx_nq_1)) = 0;
 
     n_visit_.zeros();
   }
 
-  void Reset(std::mt19937_64::result_type seed = 42) {
+  void reset(std::mt19937_64::result_type seed = 42) {
     rng.seed(seed);
     states_.zeros();
   }
 
-  virtual F Reward() const {
-    return -Fastor::inner(cs_.template cast<F>(), states_.template cast<F>());
+  virtual float_type reward() const {
+    return -Fastor::inner(cs_.template cast<float_type>(),
+                          states_.template cast<float_type>());
   }
 
-  virtual ArrayTF Prob(IT action) {
-    ArrayQB allow_u = (states_ < max_ls_);
-    auto pus = pus_ * allow_u.template cast<F>();
+  virtual array_ft_type prob(int_type action) {
+    array_bq_type allow_u = (states_ < max_ls_);
+    auto pus = pus_ * allow_u.template cast<float_type>();
 
-    ArrayQB allow_d = (action == actions_) && (states_ > 0);
-    auto pds = pds_ * allow_d.template cast<F>();
+    array_bq_type allow_d = (action == actions_) && (states_ > 0);
+    auto pds = pds_ * allow_d.template cast<float_type>();
 
-    ArrayTF p;
+    array_ft_type p;
     p(Fastor::fseq<0, n_queue>{}) = pus;
     p(Fastor::fseq<n_queue, 2 * n_queue>{}) = pds;
     p(2 * n_queue) = 1 - Fastor::sum(pus) - Fastor::sum(pds);
     return p;
   }
 
-  std::pair<ArrayQI, F> Step(IT action) {
-    auto p = Prob(action);
-    auto idx =
-        std::discrete_distribution<IT>(p.data(), p.data() + n_transition_)(rng);
-    ArrayQI t = transitions_(idx, Fastor::all);
-    return std::make_pair(states_ + t, Reward());
+  std::pair<array_iq_type, float_type> step(int_type action) {
+    auto p = prob(action);
+    auto idx = std::discrete_distribution<int_type>(
+        p.data(), p.data() + n_transition)(rng);
+    array_iq_type t = transitions_(idx, Fastor::all);
+    return std::make_pair(states_ + t, reward());
   }
 
-  void Train(F gamma = 0.9, F eps = 0.01, F decay = 0.5, IT epoch = 1,
-             IT ls = 1000000, F lr_pow = 0.51) {
-    ResetTrain();
+  void train(float_type gamma = 0.9, float_type eps = 0.01,
+             float_type decay = 0.5, int_type epoch = 1, int_type ls = 1000000,
+             float_type lr_pow = 0.51) {
+    reset_train();
 
-    for (IT i = 0; i < epoch; ++i) {
-      Reset();
+    for (int_type i = 0; i < epoch; ++i) {
+      reset();
 
-      for (IT j = 0; j < ls; ++j) {
-        IT a{};
-        ArrayQB m_as = states_ != 0;
-        if (Fastor::any_of(m_as)) {
-          std::vector<IT> idx_as;
-          for (IT k = 0; k < n_queue; ++k) {
-            if (m_as(k)) {
+      for (int_type j = 0; j < ls; ++j) {
+        int_type a{};
+        array_bq_type as = states_ != 0;
+        if (Fastor::any_of(as)) {
+          std::vector<int_type> idx_as;
+          for (int_type k = 0; k < n_queue; ++k) {
+            if (as(k)) {
               idx_as.push_back(k);
             }
           }
 
           if (eps_dis(rng) < eps) {
-            a = idx_as[std::uniform_int_distribution<IT>(
+            a = idx_as[std::uniform_int_distribution<int_type>(
                 0, idx_as.size() - 1)(rng)];
           } else {
             auto max_it = std::max_element(
-                iota_queue_.begin(), iota_queue_.end(),
-                [this](IT largest, IT current) {
-                  return std::apply(this->Q_, to_index(this->states_, largest,
-                                                       index_queue_)) <
-                         std::apply(this->Q_, to_index(this->states_, current,
-                                                       index_queue_));
+                iota_nq.begin(), iota_nq.end(),
+                [this](int_type largest, int_type current) {
+                  return std::apply(this->q_,
+                                    to_index(this->states_, largest, idx_nq)) <
+                         std::apply(this->q_,
+                                    to_index(this->states_, current, idx_nq));
                 });
             a = *max_it;
           }
         }
 
-        auto [nstates, reward] = Step(a);
+        auto [nstates, reward] = step(a);
 
         auto max_nit = std::max_element(
-            iota_queue_.begin(), iota_queue_.end(),
-            [this, nstates = &nstates](IT largest, IT current) {
-              return std::apply(this->Q_,
-                                to_index(*nstates, largest, index_queue_)) <
-                     std::apply(this->Q_,
-                                to_index(*nstates, current, index_queue_));
+            iota_nq.begin(), iota_nq.end(),
+            [this, nstates = &nstates](int_type largest, int_type current) {
+              return std::apply(this->q_, to_index(*nstates, largest, idx_nq)) <
+                     std::apply(this->q_, to_index(*nstates, current, idx_nq));
             });
-        F nq = std::apply(Q_, to_index(nstates, *max_nit, index_queue_));
+        float_type nq = std::apply(q_, to_index(nstates, *max_nit, idx_nq));
 
-        const auto st_index = to_index(states_, a, index_queue_);
+        const auto st_index = to_index(states_, a, idx_nq);
 
-        const F lr = std::pow(std::apply(n_visit_, st_index) + 1, -lr_pow);
-        std::apply(Q_, st_index) +=
-            lr * (reward + gamma * nq - std::apply(Q_, st_index));
+        const float_type lr =
+            std::pow(std::apply(n_visit_, st_index) + 1, -lr_pow);
+        std::apply(q_, st_index) +=
+            lr * (reward + gamma * nq - std::apply(q_, st_index));
         std::apply(n_visit_, st_index) += 1;
         states_ = nstates;
       }
     }
   }
 
-  const TensorQF& Q() { return Q_; }
-  const TensorQI& n_visit() { return n_visit_; }
+  const tensor_f_type& q() { return q_; }
+  const tensor_i_type& n_visit() { return n_visit_; }
+
+ protected:
+  array_fq_type cs_;
+  array_fq_type pus_;
+  array_fq_type pds_;
+
+  static inline const array_iq_type max_ls_ = {max_ls...};
+
+ private:
+  static const inline array_iq_type actions_ = iota_nq;
+
+  array_iq_type states_;
+
+  tensor_f_type q_;
+  tensor_i_type n_visit_;
+
+  std::mt19937_64 rng;
+  std::uniform_real_distribution<float_type> eps_dis;
+
+  template <typename T, typename L, int_type... i>
+  static constexpr auto to_index(const T& a, const L& l,
+                                 std::integer_sequence<int_type, i...>) {
+    return std::make_tuple(a(i)..., l);
+  }
+
+  template <int_type current, std_array_i_type l, int_type... before,
+            int_type... after>
+  static constexpr auto gen_inf_index(
+      std::integer_sequence<int_type, before...>,
+      std::integer_sequence<int_type, after...>) {
+    return std::make_tuple(Fastor::fseq<0, l[before]>{}...,
+                           Fastor::fseq<0, 1>{},
+                           Fastor::fseq<0, l[after + current + 1]>{}...,
+                           Fastor::fseq<current, current + 1>{});
+  }
+
+  template <std_array_i_type l, int_type... i>
+  static constexpr auto gen_inf_indices(
+      std::integer_sequence<int_type, i...> is) {
+    return std::make_tuple(gen_inf_index<i, l>(
+        std::make_integer_sequence<int_type, i>{},
+        std::make_integer_sequence<int_type, is.size() - i - 1>{})...);
+  }
+
+  template <int_type... i>
+  static constexpr auto gen_index_0(std::integer_sequence<int_type, i...> is) {
+    std::array<int_type, is.size()> a;
+    std::fill(a.begin(), a.end(), 0);
+    return std::make_tuple(a[i]...);
+  }
+
+  static const inline auto transitions_ = ([]() {
+    Fastor::Tensor<int_type, n_queue, n_queue> tu;
+    tu.zeros();
+    Fastor::diag(tu) = 1;
+
+    Fastor::Tensor<int_type, n_queue, n_queue> td;
+    td.zeros();
+    Fastor::diag(td) = -1;
+
+    Fastor::Tensor<int_type, n_transition, n_queue> result;
+    result(Fastor::fseq<0, n_queue>{}, Fastor::all) = tu;
+    result(Fastor::fseq<n_queue, 2 * n_queue>{}, Fastor::all) = td;
+    result(n_transition - 1, Fastor::all) = 0;
+    return result;
+  })();
 };
