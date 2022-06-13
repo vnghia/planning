@@ -41,6 +41,25 @@ class Env {
     return a;
   })();
 
+  template <int_type current, std_array_i_type l, int_type... before,
+            int_type... after>
+  static constexpr auto gen_inf_index(
+      std::integer_sequence<int_type, before...>,
+      std::integer_sequence<int_type, after...>) {
+    return std::make_tuple(Fastor::fseq<0, l[before]>{}...,
+                           Fastor::fseq<0, 1>{},
+                           Fastor::fseq<0, l[after + current + 1]>{}...,
+                           Fastor::fseq<current, current + 1>{});
+  }
+
+  template <std_array_i_type l, int_type... i>
+  static constexpr auto gen_inf_indices(
+      std::integer_sequence<int_type, i...> is) {
+    return std::make_tuple(gen_inf_index<i, l>(
+        std::make_integer_sequence<int_type, i>{},
+        std::make_integer_sequence<int_type, is.size() - i - 1>{})...);
+  }
+
   static constexpr auto idx_nq =
       std::make_integer_sequence<int_type, n_queue>{};
   static constexpr auto idx_nq_1 =
@@ -180,25 +199,6 @@ class Env {
   static constexpr auto to_index(const T& a, const L& l,
                                  std::integer_sequence<int_type, i...>) {
     return std::make_tuple(a(i)..., l);
-  }
-
-  template <int_type current, std_array_i_type l, int_type... before,
-            int_type... after>
-  static constexpr auto gen_inf_index(
-      std::integer_sequence<int_type, before...>,
-      std::integer_sequence<int_type, after...>) {
-    return std::make_tuple(Fastor::fseq<0, l[before]>{}...,
-                           Fastor::fseq<0, 1>{},
-                           Fastor::fseq<0, l[after + current + 1]>{}...,
-                           Fastor::fseq<current, current + 1>{});
-  }
-
-  template <std_array_i_type l, int_type... i>
-  static constexpr auto gen_inf_indices(
-      std::integer_sequence<int_type, i...> is) {
-    return std::make_tuple(gen_inf_index<i, l>(
-        std::make_integer_sequence<int_type, i>{},
-        std::make_integer_sequence<int_type, is.size() - i - 1>{})...);
   }
 
   template <int_type... i>
