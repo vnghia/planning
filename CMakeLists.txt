@@ -44,6 +44,7 @@ execute_process(
 list(APPEND CMAKE_PREFIX_PATH "${_tmp_dir}")
 find_package(nanobind CONFIG REQUIRED)
 
+option(BUILD_TESTING OFF)
 add_subdirectory(Fastor)
 
 add_subdirectory(planning)

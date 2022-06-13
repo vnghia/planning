@@ -33,6 +33,8 @@ class Env {
   using array_it_type = Fastor::Tensor<float_type, n_transition>;
 
   static constexpr std_array_i_type dim_ls = {max_ls + 1 ...};
+  static constexpr std::array<size_t, n_queue + 1> q_dim = {max_ls + 1 ...,
+                                                            n_queue};
   static constexpr auto iota_nq = ([]() {
     std_array_i_type a;
     std::iota(a.begin(), a.end(), 0);
@@ -153,8 +155,8 @@ class Env {
     }
   }
 
-  const tensor_f_type& q() { return q_; }
-  const tensor_i_type& n_visit() { return n_visit_; }
+  const tensor_f_type& q() const { return q_; }
+  const tensor_i_type& n_visit() const { return n_visit_; }
 
  protected:
   array_fq_type cs_;
