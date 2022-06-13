@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "Fastor/Fastor.h"
-#include "unsupported/Eigen/CXX11/Tensor"
 
 using IT = int;
 
@@ -22,8 +21,6 @@ class Env {
   using STDArrayQI = std::array<IT, n_queue>;
   using TensorQF = Fastor::Tensor<F, max_ls + 1 ..., n_queue>;
   using TensorQI = Fastor::Tensor<IT, max_ls + 1 ..., n_queue>;
-  using TensorEMQF = Eigen::TensorMap<Eigen::Tensor<F, n_queue + 1>>;
-  using TensorEQI = Eigen::Tensor<Eigen::Index, n_queue>;
 
  private:
   template <typename T, typename L, IT... i>
@@ -91,8 +88,6 @@ class Env {
   ArrayQI states_;
 
   TensorQF Q_;
-  TensorEMQF Qme_;
-  TensorEQI Policy_;
   TensorQI n_visit_;
 
   std::mt19937_64 rng;
@@ -107,10 +102,7 @@ class Env {
 
  public:
   Env(const STDVectorF& cs, const STDVectorF& pus, const STDVectorF& pds)
-      : Qme_(Q_.data(), max_ls + 1 ..., n_queue),
-        cs_(cs),
-        pus_(pus),
-        pds_(pds) {}
+      : cs_(cs), pus_(pus), pds_(pds) {}
 
   void ResetTrain() {
     Q_.zeros();
@@ -212,13 +204,8 @@ class Env {
         states_ = nstates;
       }
     }
-
-    new (&Qme_)
-        TensorEMQF(Fastor::torowmajor(Q_).data(), max_ls + 1 ..., n_queue);
-    Policy_ = Qme_.argmax(n_queue);
   }
 
   const TensorQF& Q() { return Q_; }
-  const TensorEQI& Policy() { return Policy_; }
   const TensorQI& n_visit() { return n_visit_; }
 };

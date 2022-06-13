@@ -34,7 +34,6 @@ if (SKBUILD)
 endif()
 
 find_package(Python COMPONENTS Interpreter Development REQUIRED)
-find_package(Eigen3 CONFIG REQUIRED)
 find_path(DBG_MACRO_INCLUDE_DIRS "dbg.h")
 
 execute_process(
