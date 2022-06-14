@@ -250,6 +250,6 @@ class ConvexEnv : public LinearEnv<F, save_qs_t, max_ls...> {
   using env_type::env_type;
 
   typename env_type::float_type reward() const override {
-    return cs_[0] * states_[0] + cs_[1] * states_[1] * states_[1];
+    return -(cs_[0] * states_[0] + cs_[1] * states_[1] * states_[1]);
   }
 };
