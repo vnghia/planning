@@ -18,6 +18,12 @@ class Env:
         )
         self._policy = None
 
+    def __repr__(self):
+        return (
+            f"{self.type}_env: "
+            f"ls: {self.ls} cs: {self.cs} pus: {self.pus} pds: {self.pds} save_q: {self.save_q}"
+        )
+
     def train(self, gamma=0.9, eps=0.01, decay=0.5, epoch=1, ls=1000000, lr_pow=0.51):
         self.env.train(gamma, eps, decay, epoch, ls, lr_pow)
         self._policy = np.argmax(self.q, axis=-1)
