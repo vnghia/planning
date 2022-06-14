@@ -79,37 +79,38 @@ constexpr auto gen_env(nb::module_ &m) {
 }
 
 template <template <typename F, bool save_qs_t, int_type... max_ls> class EnvT,
-          const char *prefix, bool save_qs, int_type i, int_type sj,
-          int_type... j>
+          typename f_t, const char *prefix, bool save_qs, int_type i,
+          int_type sj, int_type... j>
 constexpr auto gen_env_1d(nb::module_ &m,
                           std::integer_sequence<int_type, j...>) {
-  (gen_env<EnvT<double, save_qs, i, j + sj>, prefix>(m), ...);
+  (gen_env<EnvT<f_t, save_qs, i, j + sj>, prefix>(m), ...);
 }
 
 template <template <typename F, bool save_qs_t, int_type... max_ls> class EnvT,
-          const char *prefix, int_type si, int_type sj, int_type... i,
-          int_type... j>
+          typename f_t, const char *prefix, int_type si, int_type sj,
+          int_type... i, int_type... j>
 constexpr auto gen_env_2d(nb::module_ &m, std::integer_sequence<int_type, i...>,
                           std::integer_sequence<int_type, j...> js) {
-  (gen_env_1d<EnvT, prefix, true, i + si, sj>(m, js), ...);
-  (gen_env_1d<EnvT, prefix, false, i + si, sj>(m, js), ...);
+  (gen_env_1d<EnvT, f_t, prefix, true, i + si, sj>(m, js), ...);
+  (gen_env_1d<EnvT, f_t, prefix, false, i + si, sj>(m, js), ...);
 }
 
 template <template <typename F, bool save_qs_t, int_type... max_ls> class EnvT,
-          const char *prefix, int_type si, int_type... i>
+          typename f_t, const char *prefix, int_type si, int_type... i>
 constexpr auto gen_env_square(nb::module_ &m,
                               std::integer_sequence<int_type, i...>) {
-  (gen_env<EnvT<double, true, i + si, i + si>, prefix>(m), ...);
-  (gen_env<EnvT<double, false, i + si, i + si>, prefix>(m), ...);
+  (gen_env<EnvT<f_t, true, i + si, i + si>, prefix>(m), ...);
+  (gen_env<EnvT<f_t, false, i + si, i + si>, prefix>(m), ...);
 }
 
 NB_MODULE(planning_ext, m) {
   static constexpr auto is = std::make_integer_sequence<int_type, 18>{};
   static constexpr int_type si = 3;
+  using f_t = double;
 
   static constexpr char linear_prefix[] = "linear_env_";
-  gen_env_square<LinearEnv, linear_prefix, si>(m, is);
+  gen_env_square<LinearEnv, f_t, linear_prefix, si>(m, is);
 
   static constexpr char convex_prefix[] = "convex_env_";
-  gen_env_square<ConvexEnv, convex_prefix, si>(m, is);
+  gen_env_square<ConvexEnv, f_t, convex_prefix, si>(m, is);
 }

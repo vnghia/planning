@@ -144,7 +144,7 @@ class Env {
           if (eps_dis(rng) < eps) {
             a = idx_as[std::uniform_int_distribution<int_type>(
                 0, idx_as.size() - 1)(rng)];
-          } else {
+          } else [[likely]] {
             auto max_it = std::max_element(
                 iota_nq.begin(), iota_nq.end(),
                 [this](int_type largest, int_type current) {
