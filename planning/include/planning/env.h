@@ -193,13 +193,12 @@ class Env {
   array_fq_type cs_;
   array_fq_type pus_;
   array_fq_type pds_;
+  array_iq_type states_;
 
   static inline const array_iq_type max_ls_ = {max_ls...};
 
  private:
   static const inline array_iq_type actions_ = iota_nq;
-
-  array_iq_type states_;
 
   tensor_f_type q_;
   tensor_i_type n_visit_;
@@ -236,4 +235,21 @@ class Env {
     result(n_transition - 1, Fastor::all) = 0;
     return result;
   })();
+};
+
+template <typename F, bool save_qs_t, int_type... max_ls>
+using LinearEnv = Env<2, F, save_qs_t, max_ls...>;
+
+template <typename F, bool save_qs_t, int_type... max_ls>
+class ConvexEnv : public LinearEnv<F, save_qs_t, max_ls...> {
+  using env_type = LinearEnv<F, save_qs_t, max_ls...>;
+  using env_type::cs_;
+  using env_type::states_;
+
+ public:
+  using env_type::env_type;
+
+  typename env_type::float_type reward() const override {
+    return cs_[0] * states_[0] + cs_[1] * states_[1] * states_[1];
+  }
 };
