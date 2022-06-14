@@ -70,53 +70,45 @@ constexpr auto gen_env(nb::module_ &m, const std::string &name) {
       });
 }
 
-template <bool save_q, int_type i, int_type j>
-constexpr auto gen_linear_env(nb::module_ &m) {
-  gen_env<LinearEnv<double, save_q, i, j>>(
-      m, "linear_env_" + std::to_string(save_q) + "_" + std::to_string(i) +
-             "_" + std::to_string(j));
+template <typename EnvT, const char *prefix>
+constexpr auto gen_env(nb::module_ &m) {
+  gen_env<EnvT>(m, prefix + std::to_string(EnvT::save_qs) + "_" +
+                       std::to_string(EnvT::dim_ls[0] - 1) + "_" +
+                       std::to_string(EnvT::dim_ls[1] - 1));
 }
 
-template <bool save_q, int_type i, int_type sj, int_type... j>
-constexpr auto gen_linear_env_1d(nb::module_ &m,
-                                 std::integer_sequence<int_type, j...>) {
-  (gen_linear_env<save_q, i, j + sj>(m), ...);
+template <template <typename F, bool save_qs_t, int_type... max_ls> class EnvT,
+          const char *prefix, bool save_qs, int_type i, int_type sj,
+          int_type... j>
+constexpr auto gen_env_1d(nb::module_ &m,
+                          std::integer_sequence<int_type, j...>) {
+  (gen_env<EnvT<double, save_qs, i, j + sj>, prefix>(m), ...);
 }
 
-template <int_type si, int_type sj, int_type... i, int_type... j>
-constexpr auto gen_linear_env_2d(nb::module_ &m,
-                                 std::integer_sequence<int_type, i...>,
-                                 std::integer_sequence<int_type, j...> js) {
-  (gen_linear_env_1d<true, i + si, sj>(m, js), ...);
-  (gen_linear_env_1d<false, i + si, sj>(m, js), ...);
+template <template <typename F, bool save_qs_t, int_type... max_ls> class EnvT,
+          const char *prefix, int_type si, int_type sj, int_type... i,
+          int_type... j>
+constexpr auto gen_env_2d(nb::module_ &m, std::integer_sequence<int_type, i...>,
+                          std::integer_sequence<int_type, j...> js) {
+  (gen_env_1d<EnvT, prefix, true, i + si, sj>(m, js), ...);
+  (gen_env_1d<EnvT, prefix, false, i + si, sj>(m, js), ...);
 }
 
-template <bool save_q, int_type i, int_type j>
-constexpr auto gen_convex_env(nb::module_ &m) {
-  gen_env<ConvexEnv<double, save_q, i, j>>(
-      m, "convex_env_" + std::to_string(save_q) + "_" + std::to_string(i) +
-             "_" + std::to_string(j));
-}
-
-template <bool save_q, int_type i, int_type sj, int_type... j>
-constexpr auto gen_convex_env_1d(nb::module_ &m,
-                                 std::integer_sequence<int_type, j...>) {
-  (gen_convex_env<save_q, i, j + sj>(m), ...);
-}
-
-template <int_type si, int_type sj, int_type... i, int_type... j>
-constexpr auto gen_convex_env_2d(nb::module_ &m,
-                                 std::integer_sequence<int_type, i...>,
-                                 std::integer_sequence<int_type, j...> js) {
-  (gen_convex_env_1d<true, i + si, sj>(m, js), ...);
-  (gen_convex_env_1d<false, i + si, sj>(m, js), ...);
+template <template <typename F, bool save_qs_t, int_type... max_ls> class EnvT,
+          const char *prefix, int_type si, int_type... i>
+constexpr auto gen_env_square(nb::module_ &m,
+                              std::integer_sequence<int_type, i...>) {
+  (gen_env<EnvT<double, true, i + si, i + si>, prefix>(m), ...);
+  (gen_env<EnvT<double, false, i + si, i + si>, prefix>(m), ...);
 }
 
 NB_MODULE(planning_ext, m) {
-  static constexpr auto is = std::integer_sequence<int_type, 3, 6, 9>{};
-  static constexpr auto js = is;
-  static constexpr int_type si = 0;
-  static constexpr int_type sj = 0;
-  gen_linear_env_2d<si, sj>(m, is, js);
-  gen_convex_env_2d<si, sj>(m, is, js);
+  static constexpr auto is = std::make_integer_sequence<int_type, 18>{};
+  static constexpr int_type si = 3;
+
+  static constexpr char linear_prefix[] = "linear_env_";
+  gen_env_square<LinearEnv, linear_prefix, si>(m, is);
+
+  static constexpr char convex_prefix[] = "convex_env_";
+  gen_env_square<ConvexEnv, convex_prefix, si>(m, is);
 }
