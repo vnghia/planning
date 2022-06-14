@@ -50,11 +50,12 @@ constexpr auto gen_env(nb::module_ &m, const std::string &name) {
           "train",
           [](env_type &e, env_float_type gamma = 0.9, env_float_type eps = 0.01,
              env_float_type decay = 0.5, int_type epoch = 1,
-             int_type ls = 1000000, env_float_type lr_pow = 0.51) {
-            e.train(gamma, eps, decay, epoch, ls, lr_pow);
+             uint64_t ls = 20000000, env_float_type lr_pow = 0.51,
+             std::mt19937_64::result_type seed = 42) {
+            e.train(gamma, eps, decay, epoch, ls, lr_pow, seed);
           },
           "gamma"_a = 0.9, "eps"_a = 0.01, "decay"_a = 0.5, "epoch"_a = 1,
-          "ls"_a = 1000000, "lr_pow"_a = 0.51)
+          "ls"_a = 20000000, "lr_pow"_a = 0.51, "seed"_a = 42)
       .def_property_readonly("q",
                              [](const env_type &e) {
                                return gen_q<env_type, env_float_type>(

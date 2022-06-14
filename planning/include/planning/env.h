@@ -119,8 +119,8 @@ class Env {
   }
 
   void train(float_type gamma = 0.9, float_type eps = 0.01,
-             float_type decay = 0.5, int_type epoch = 1, int_type ls = 1000000,
-             float_type lr_pow = 0.51) {
+             float_type decay = 0.5, int_type epoch = 1, uint64_t ls = 20000000,
+             float_type lr_pow = 0.51, std::mt19937_64::result_type seed = 42) {
     reset_train();
 
     if constexpr (save_qs) {
@@ -128,7 +128,7 @@ class Env {
     }
 
     for (int_type i = 0; i < epoch; ++i) {
-      reset();
+      reset(seed);
 
       for (int_type j = 0; j < ls; ++j) {
         int_type a{};
