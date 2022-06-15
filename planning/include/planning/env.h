@@ -204,7 +204,7 @@ class Env {
   array_fq_type pds_;
   array_iq_type states_;
 
-  static inline const array_iq_type max_ls_ = {max_ls...};
+  static constexpr array_iq_type max_ls_ = {max_ls...};
 
  private:
   static const inline array_iq_type actions_ = iota_nq;

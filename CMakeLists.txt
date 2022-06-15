@@ -47,5 +47,6 @@ find_package(nanobind CONFIG REQUIRED)
 
 option(BUILD_TESTING OFF)
 add_subdirectory(Fastor)
+target_link_options(Fastor INTERFACE -DFASTOR_ZERO_INITIALISE)
 
 add_subdirectory(planning)
