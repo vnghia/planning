@@ -106,7 +106,7 @@ class Env {
     array_ft_type p;
     p(Fastor::fseq<0, n_queue>{}) = pus;
     p(Fastor::fseq<n_queue, 2 * n_queue>{}) = pds;
-    p(2 * n_queue) = 1 - Fastor::sum(pus) - Fastor::sum(pds);
+    p(Fastor::fix<2 * n_queue>) = 1 - Fastor::sum(pus) - Fastor::sum(pds);
     return p;
   }
 
@@ -224,9 +224,7 @@ class Env {
 
   template <int_type... i>
   static constexpr auto gen_index_0(std::integer_sequence<int_type, i...> is) {
-    std::array<int_type, is.size()> a;
-    std::fill(a.begin(), a.end(), 0);
-    return std::make_tuple(a[i]...);
+    return std::make_tuple(Fastor::fix<0 * i>...);
   }
 
   static const inline auto transitions_ = ([]() {
@@ -241,7 +239,7 @@ class Env {
     Fastor::Tensor<int_type, n_transition, n_queue> result;
     result(Fastor::fseq<0, n_queue>{}, Fastor::all) = tu;
     result(Fastor::fseq<n_queue, 2 * n_queue>{}, Fastor::all) = td;
-    result(n_transition - 1, Fastor::all) = 0;
+    result(Fastor::fix<n_transition - 1>, Fastor::all) = 0;
     return result;
   })();
 };
