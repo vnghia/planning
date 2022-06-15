@@ -118,6 +118,34 @@ class Env:
                 plt.title(f"L1 = {l1} - L2 = {l2}{info}")
                 plt.show()
 
+    def show_cost(self, ax=None, info=""):
+        ax = ax or plt.axes()
+        x1 = np.linspace(0, self.ls[0], 100)
+        x2 = np.linspace(0, self.ls[1], 100)
+        ax.plot(x1, self.cs[0] * x1, label="cost 0")
+        if self.type == "convex":
+            y2 = self.cs[1] * x2**2
+        else:
+            y2 = self.cs[1] * x2
+        ax.plot(x2, y2, label="cost 1")
+        ax.legend()
+        ax.set_title(f"cost{info}")
+
+    def show_ratio(self, ax=None, info=""):
+        ax = ax or plt.axes()
+        x1 = np.linspace(0, self.ls[0], 100)
+        x2 = np.linspace(0, self.ls[1], 100)
+        ax.plot(x1, self.cs[0] / self.pds[0] * x1, label="ratio 0")
+        if self.type == "convex":
+            y2 = self.cs[1] / self.pds[1] * x2**2
+        else:
+            y2 = self.cs[1] / self.pds[1] * x2
+        ax.plot(x2, y2, label="ratio 1")
+        ax.legend()
+        ax.set_title(
+            f"ratio {(self.cs[0] / self.pds[0]) / (self.cs[1] / self.pds[1])}{info}"
+        )
+
     @classmethod
     def init_and_train(
         cls, ls, cs, pus, pds, type, save_q, gamma, eps, decay, epoch, learns, lr_pow
