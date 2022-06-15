@@ -1,5 +1,5 @@
-import ctypes
 import io
+from multiprocessing import Pool
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -66,7 +66,7 @@ class Env:
         self.env.from_array(q, n_visit, qs, qs.size)
         self._policy = data["policy"]
 
-    def train(self, gamma=0.9, eps=0.01, decay=0.5, epoch=1, ls=1000000, lr_pow=0.51):
+    def train(self, gamma=0.9, eps=0.01, decay=0.5, epoch=1, ls=20000000, lr_pow=0.51):
         self.env.train(gamma, eps, decay, epoch, ls, lr_pow)
         self._policy = np.argmax(self.q, axis=-1)
 
@@ -117,3 +117,46 @@ class Env:
                 l2 = index[1] if len(index) > 1 else j
                 plt.title(f"L1 = {l1} - L2 = {l2}{info}")
                 plt.show()
+
+    @classmethod
+    def init_and_train(
+        cls, ls, cs, pus, pds, type, save_q, gamma, eps, decay, epoch, learns, lr_pow
+    ):
+        env = cls(ls, cs, pus, pds, type, save_q)
+        env.train(gamma, eps, decay, epoch, learns, lr_pow)
+        return env
+
+    @staticmethod
+    def param(
+        ls,
+        cs,
+        pus=None,
+        pds=None,
+        type="linear",
+        save_q=False,
+        gamma=0.9,
+        eps=0.01,
+        decay=0.5,
+        epoch=1,
+        learns=20000000,
+        lr_pow=0.51,
+    ):
+        return (
+            ls,
+            cs,
+            pus,
+            pds,
+            type,
+            save_q,
+            gamma,
+            eps,
+            decay,
+            epoch,
+            learns,
+            lr_pow,
+        )
+
+    @classmethod
+    def train_parallel(cls, parameters):
+        with Pool() as p:
+            return p.starmap(cls.init_and_train, parameters)
