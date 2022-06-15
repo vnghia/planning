@@ -1,3 +1,6 @@
+import ctypes
+import io
+
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import colors
@@ -9,8 +12,8 @@ class Env:
     def __init__(self, ls, cs, pus=None, pds=None, type="linear", save_q=False):
         self.ls = ls
         self.cs = cs
-        self.pus = pus or [0.1, 0.1]
-        self.pds = pds or [0.3, 0.3]
+        self.pus = pus if pus is not None else [0.1, 0.1]
+        self.pds = pds if pds is not None else [0.3, 0.3]
         self.type = type
         self.save_q = save_q
         self.env = vars(planning_ext)[f"{type}_env_{int(save_q)}_{ls[0]}_{ls[1]}"](
@@ -23,6 +26,45 @@ class Env:
             f"{self.type}_env: "
             f"ls: {self.ls} cs: {self.cs} pus: {self.pus} pds: {self.pds} save_q: {self.save_q}"
         )
+
+    def __getstate__(self):
+        state = io.BytesIO()
+        np.savez_compressed(
+            state,
+            ls=self.ls,
+            cs=self.cs,
+            pus=self.pus,
+            pds=self.pds,
+            type=self.type,
+            save_q=self.save_q,
+            q=self.q,
+            n_visit=self.n_visit,
+            qs=self.qs,
+            policy=self.policy,
+        )
+        return state.getvalue()
+
+    def __setstate__(self, state):
+        data = np.load(io.BytesIO(state), allow_pickle=True)
+        self.__init__(
+            data["ls"],
+            data["cs"],
+            data["pus"],
+            data["pds"],
+            data["type"].item(),
+            data["save_q"].item(),
+        )
+
+        q = data["q"]
+        n_visit = data["n_visit"]
+        qs = (
+            np.zeros(shape=(0,) + q.shape, dtype=q.dtype)
+            if not self.save_q
+            else data["qs"]
+        )
+
+        self.env.from_array(q, n_visit, qs, qs.size)
+        self._policy = data["policy"]
 
     def train(self, gamma=0.9, eps=0.01, decay=0.5, epoch=1, ls=1000000, lr_pow=0.51):
         self.env.train(gamma, eps, decay, epoch, ls, lr_pow)

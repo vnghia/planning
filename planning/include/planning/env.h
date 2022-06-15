@@ -185,6 +185,15 @@ class Env {
     }
   }
 
+  void from_array(const float_type* q, const int_type* n_visit, float_type* qs,
+                  size_t qs_size) {
+    q_ = q;
+    n_visit_ = n_visit;
+    if constexpr (save_qs) {
+      std::copy(qs, qs + qs_size, qs_.begin());
+    }
+  }
+
   const tensor_f_type& q() const { return q_; }
   const tensor_i_type& n_visit() const { return n_visit_; }
   const std_vector_f_type& qs() const { return qs_; }

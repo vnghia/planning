@@ -39,6 +39,27 @@ constexpr auto gen_qs(const vec_type &v,
           .data());
 }
 
+template <typename env_type, int_type... i>
+constexpr auto gen_from_array(std::integer_sequence<int_type, i...>) {
+  using env_float_type = typename env_type::float_type;
+  return [](env_type &e,
+            nb::tensor<nb::numpy, env_float_type,
+                       nb::shape<env_type::dim_ls[i]..., env_type::n_queue>>
+                q,
+            nb::tensor<nb::numpy, int_type,
+                       nb::shape<env_type::dim_ls[i]..., env_type::n_queue>>
+                n_visit,
+            nb::tensor<
+                nb::numpy, env_float_type,
+                nb::shape<nb::any, env_type::dim_ls[i]..., env_type::n_queue>>
+                qs,
+            size_t qs_size) {
+    e.from_array(static_cast<env_float_type *>(q.data()),
+                 static_cast<int_type *>(n_visit.data()),
+                 static_cast<env_float_type *>(qs.data()), qs_size);
+  };
+}
+
 template <typename env_type>
 constexpr auto gen_env(nb::module_ &m, const std::string &name) {
   using env_float_type = typename env_type::float_type;
@@ -66,9 +87,12 @@ constexpr auto gen_env(nb::module_ &m, const std::string &name) {
                                return gen_q<env_type, int_type>(
                                    e.n_visit(), env_type::idx_nq);
                              })
-      .def_property_readonly("qs", [](const env_type &e) {
-        return gen_qs<env_type, env_float_type>(e.qs(), env_type::idx_nq);
-      });
+      .def_property_readonly("qs",
+                             [](const env_type &e) {
+                               return gen_qs<env_type, env_float_type>(
+                                   e.qs(), env_type::idx_nq);
+                             })
+      .def("from_array", gen_from_array<env_type>(env_type::idx_nq));
 }
 
 template <typename EnvT, const char *prefix>
