@@ -98,10 +98,10 @@ class Env {
 
   virtual array_ft_type prob(int_type action) {
     array_bq_type allow_u = (states_ < max_ls_);
-    auto pus = pus_ * allow_u.template cast<float_type>();
+    array_fq_type pus = pus_ * allow_u.template cast<float_type>();
 
     array_bq_type allow_d = (action == actions_) && (states_ > 0);
-    auto pds = pds_ * allow_d.template cast<float_type>();
+    array_fq_type pds = pds_ * allow_d.template cast<float_type>();
 
     array_ft_type p;
     p(Fastor::fseq<0, n_queue>{}) = pus;
