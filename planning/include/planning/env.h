@@ -71,7 +71,9 @@ class Env {
  public:
   Env(const std_vector_f_type& cs, const std_vector_f_type& pus,
       const std_vector_f_type& pds)
-      : cs_(cs), pus_(pus), pds_(pds), reward_(init_reward()) {}
+      : cs_(cs), pus_(pus), pds_(pds) {}
+
+  void init_once() { this->reward_mat_ = this->init_reward(); }
 
   void reset_train() {
     q_.zeros();
@@ -165,7 +167,7 @@ class Env {
 
         const auto st_index = to_index(states_, a, idx_nq);
 
-        auto reward = std::apply(reward_, to_index(nstates, idx_nq));
+        auto reward = std::apply(reward_mat_, to_index(nstates, idx_nq));
         const float_type lr =
             std::pow(std::apply(n_visit_, st_index) + 1, -lr_pow);
         std::apply(q_, st_index) +=
@@ -194,6 +196,7 @@ class Env {
   const tensor_f_type& q() const { return q_; }
   const tensor_i_type& n_visit() const { return n_visit_; }
   const std_vector_f_type& qs() const { return qs_; }
+  const tensor_r_type& reward_mat() const { return reward_mat_; }
 
  protected:
   array_fq_type cs_;
@@ -211,7 +214,7 @@ class Env {
   tensor_f_type q_;
   tensor_i_type n_visit_;
   std_vector_f_type qs_;
-  const tensor_r_type reward_;
+  tensor_r_type reward_mat_;
 
   std::mt19937_64 rng;
   std::uniform_real_distribution<float_type> eps_dis;
@@ -252,40 +255,44 @@ class Env {
 
 template <typename F, bool save_qs_t, int_type... max_ls>
 class LinearEnv : public Env<2, F, save_qs_t, max_ls...> {
-  using env_type = Env<2, F, save_qs_t, max_ls...>;
-  using env_type::cs_;
-
  public:
-  using env_type::dim_ls;
-  using env_type::env_type;
+  using parent_type = Env<2, F, save_qs_t, max_ls...>;
+  using parent_type::dim_ls;
+  using parent_type::parent_type;
 
-  typename env_type::tensor_r_type init_reward() const override {
-    typename env_type::tensor_r_type res;
+  typename parent_type::tensor_r_type init_reward() const override {
+    typename parent_type::tensor_r_type res;
     for (int_type i = 0; i < dim_ls[0]; ++i) {
-      for (int_type j = 0; j < dim_ls[1]; ++i) {
+      for (int_type j = 0; j < dim_ls[1]; ++j) {
         res(i, j) = -(cs_[0] * i + cs_[1] * j);
       }
     }
     return res;
   }
+
+ protected:
+  using parent_type::cs_;
 };
+
+#include <iostream>
 
 template <typename F, bool save_qs_t, int_type... max_ls>
 class ConvexEnv : public Env<2, F, save_qs_t, max_ls...> {
-  using env_type = Env<2, F, save_qs_t, max_ls...>;
-  using env_type::cs_;
-
  public:
-  using env_type::dim_ls;
-  using env_type::env_type;
+  using parent_type = Env<2, F, save_qs_t, max_ls...>;
+  using parent_type::dim_ls;
+  using parent_type::parent_type;
 
-  typename env_type::tensor_r_type init_reward() const override {
-    typename env_type::tensor_r_type res;
+  typename parent_type::tensor_r_type init_reward() const override {
+    typename parent_type::tensor_r_type res;
     for (int_type i = 0; i < dim_ls[0]; ++i) {
-      for (int_type j = 0; j < dim_ls[1]; ++i) {
+      for (int_type j = 0; j < dim_ls[1]; ++j) {
         res(i, j) = -(cs_[0] * i + cs_[1] * j * j);
       }
     }
     return res;
   }
+
+ protected:
+  using parent_type::cs_;
 };
