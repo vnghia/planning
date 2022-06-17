@@ -16,10 +16,9 @@ class Env:
         self.pds = pds if pds is not None else [0.3, 0.3]
         self.type = type
         self.save_q = save_q
-        self.__env = vars(planning_ext)[f"{type}_env_{int(save_q)}_{ls[0]}_{ls[1]}"](
+        self.env = vars(planning_ext)[f"{type}_env_{int(save_q)}_{ls[0]}_{ls[1]}"](
             cs, self.pus, self.pds
         )
-        self.__env.init_once()
         self._policy = None
 
     def __repr__(self):
@@ -64,28 +63,24 @@ class Env:
             else data["qs"]
         )
 
-        self.__env.from_array(q, n_visit, qs, qs.size)
+        self.env.from_array(q, n_visit, qs, qs.size)
         self._policy = data["policy"]
 
     def train(self, gamma=0.9, eps=0.01, decay=0.5, epoch=1, ls=20000000, lr_pow=0.51):
-        self.__env.train(gamma, eps, decay, epoch, ls, lr_pow)
+        self.env.train(gamma, eps, decay, epoch, ls, lr_pow)
         self._policy = np.argmax(self.q, axis=-1)
 
     @property
     def q(self):
-        return self.__env.q
+        return self.env.q
 
     @property
     def n_visit(self):
-        return self.__env.n_visit
+        return self.env.n_visit
 
     @property
     def qs(self):
-        return self.__env.qs if self.save_q else None
-
-    @property
-    def reward_mat(self):
-        return self.__env.reward_mat
+        return self.env.qs if self.save_q else None
 
     @property
     def policy(self):
