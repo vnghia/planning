@@ -1,10 +1,5 @@
-import sys, re, os
+from skbuild import setup
 
-try:
-    from skbuild import setup
-    import nanobind
-except ImportError:
-    raise
 
 setup(
     name="planning",
