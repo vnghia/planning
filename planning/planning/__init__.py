@@ -146,6 +146,53 @@ class Env:
             f"ratio {(self.cs[0] / self.pds[0]) / (self.cs[1] / self.pds[1])}{info}"
         )
 
+    def show_n_visit(self, info=""):
+        fig = plt.figure(figsize=plt.figaspect(0.5))
+        _x = np.arange(self.ls[0] + 1)
+        _y = np.arange(self.ls[1] + 1)
+        _xx, _yy = np.meshgrid(_x, _y, indexing="ij")
+        x, y = _xx.ravel(), _yy.ravel()
+
+        ax1 = fig.add_subplot(1, 2, 1, projection="3d")
+        dz1 = self.n_visit.transpose(2, 0, 1)[0].ravel()
+        ax1.bar3d(
+            x,
+            y,
+            np.zeros_like(dz1),
+            np.ones_like(x) * 0.75,
+            np.ones_like(x) * 0.75,
+            dz1,
+            shade=True,
+            color="blue",
+        )
+        ax1.set_xlabel("L1")
+        ax1.set_xticks(_x)
+        ax1.set_ylabel("L2")
+        ax1.set_yticks(_y)
+        ax1.set_title(f"action 0")
+        ax1.set_ylim(ax1.get_ylim()[::-1])
+
+        ax2 = fig.add_subplot(1, 2, 2, projection="3d")
+        dz2 = self.n_visit.transpose(2, 0, 1)[1].ravel()
+        ax2.bar3d(
+            x,
+            y,
+            np.zeros_like(dz2),
+            np.ones_like(x) * 0.75,
+            np.ones_like(x) * 0.75,
+            dz2,
+            shade=True,
+            color="orange",
+        )
+        ax2.set_xlabel("L1")
+        ax2.set_xticks(_x)
+        ax2.set_ylabel("L2")
+        ax2.set_yticks(_y)
+        ax2.set_title(f"action 1")
+        ax2.set_ylim(ax2.get_ylim()[::-1])
+
+        fig.suptitle(f"n_visit{info}")
+
     @classmethod
     def init_and_train(
         cls, ls, cs, pus, pds, type, save_q, gamma, eps, decay, epoch, learns, lr_pow
