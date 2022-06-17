@@ -25,7 +25,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(CMAKE_CXX_FLAGS_DEBUG "-g")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -DFASTOR_ENABLE_RUNTIME_CHECKS=0 -march=native -ffast-math")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -ffast-math")
 
 if(SKBUILD)
   set(Python_VERSION "${PYTHON_VERSION_STRING}")
@@ -45,8 +45,12 @@ execute_process(
 list(APPEND CMAKE_PREFIX_PATH "${_tmp_dir}")
 find_package(nanobind CONFIG REQUIRED)
 
-option(BUILD_TESTING OFF)
+set(BUILD_TESTING OFF CACHE INTERNAL "" FORCE)
 add_subdirectory(Fastor)
-target_link_options(Fastor INTERFACE -DFASTOR_ZERO_INITIALISE)
+target_compile_options(Fastor INTERFACE -DFASTOR_ZERO_INITIALISE)
+target_compile_options(Fastor INTERFACE -DFASTOR_ENABLE_RUNTIME_CHECKS=0)
+target_compile_options(Fastor INTERFACE -DFASTOR_NO_ALIAS)
+target_compile_options(Fastor INTERFACE -DFASTOR_USE_VECTORISED_EXPR_ASSIGN)
+target_compile_options(Fastor INTERFACE -DCONTRACT_OPT=2)
 
 add_subdirectory(planning)
