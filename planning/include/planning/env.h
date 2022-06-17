@@ -30,6 +30,7 @@ class Env {
 
   using tensor_f_type = Fastor::Tensor<float_type, max_ls + 1 ..., n_queue>;
   using tensor_i_type = Fastor::Tensor<int_type, max_ls + 1 ..., n_queue>;
+  using tensor_r_type = Fastor::Tensor<float_type, max_ls + 1 ...>;
 
   using array_ft_type = Fastor::Tensor<float_type, n_transition>;
   using array_it_type = Fastor::Tensor<float_type, n_transition>;
@@ -72,6 +73,8 @@ class Env {
       const std_vector_f_type& pds)
       : cs_(cs), pus_(pus), pds_(pds) {}
 
+  void init_once() { this->reward_mat_ = this->init_reward(); }
+
   void reset_train() {
     q_.zeros();
     std::apply(
@@ -91,11 +94,6 @@ class Env {
     states_.zeros();
   }
 
-  virtual float_type reward() const {
-    return -Fastor::inner(cs_.template cast<float_type>(),
-                          states_.template cast<float_type>());
-  }
-
   virtual array_ft_type prob(int_type action) {
     array_bq_type allow_u = (states_ < max_ls_);
     array_fq_type pus = pus_ * allow_u.template cast<float_type>();
@@ -110,12 +108,12 @@ class Env {
     return p;
   }
 
-  std::pair<array_iq_type, float_type> step(int_type action) {
+  array_iq_type step(int_type action) {
     auto p = prob(action);
     auto idx = std::discrete_distribution<int_type>(
         p.data(), p.data() + n_transition)(rng);
     array_iq_type t = transitions_(idx, Fastor::all);
-    return std::make_pair(states_ + t, reward());
+    return states_ + t;
   }
 
   void train(float_type gamma = 0.9, float_type eps = 0.01,
@@ -157,18 +155,19 @@ class Env {
           }
         }
 
-        auto [nstates, reward] = step(a);
+        auto nstates = step(a);
 
         auto max_nit = std::max_element(
             iota_nq.begin(), iota_nq.end(),
-            [this, nstates = &nstates](int_type largest, int_type current) {
-              return std::apply(this->q_, to_index(*nstates, largest, idx_nq)) <
-                     std::apply(this->q_, to_index(*nstates, current, idx_nq));
+            [this, &nstates](int_type largest, int_type current) {
+              return std::apply(this->q_, to_index(nstates, largest, idx_nq)) <
+                     std::apply(this->q_, to_index(nstates, current, idx_nq));
             });
         float_type nq = std::apply(q_, to_index(nstates, *max_nit, idx_nq));
 
         const auto st_index = to_index(states_, a, idx_nq);
 
+        auto reward = std::apply(reward_mat_, to_index(nstates, idx_nq));
         const float_type lr =
             std::pow(std::apply(n_visit_, st_index) + 1, -lr_pow);
         std::apply(q_, st_index) +=
@@ -197,6 +196,7 @@ class Env {
   const tensor_f_type& q() const { return q_; }
   const tensor_i_type& n_visit() const { return n_visit_; }
   const std_vector_f_type& qs() const { return qs_; }
+  const tensor_r_type& reward_mat() const { return reward_mat_; }
 
  protected:
   array_fq_type cs_;
@@ -207,11 +207,14 @@ class Env {
   static constexpr array_iq_type max_ls_ = {max_ls...};
 
  private:
+  virtual tensor_r_type init_reward() const { return {}; }
+
   static const inline array_iq_type actions_ = iota_nq;
 
   tensor_f_type q_;
   tensor_i_type n_visit_;
   std_vector_f_type qs_;
+  tensor_r_type reward_mat_;
 
   std::mt19937_64 rng;
   std::uniform_real_distribution<float_type> eps_dis;
@@ -220,6 +223,12 @@ class Env {
   static constexpr auto to_index(const T& a, const L& l,
                                  std::integer_sequence<int_type, i...>) {
     return std::make_tuple(a(i)..., l);
+  }
+
+  template <typename T, int_type... i>
+  static constexpr auto to_index(const T& a,
+                                 std::integer_sequence<int_type, i...>) {
+    return std::make_tuple(a(i)...);
   }
 
   template <int_type... i>
@@ -245,18 +254,45 @@ class Env {
 };
 
 template <typename F, bool save_qs_t, int_type... max_ls>
-using LinearEnv = Env<2, F, save_qs_t, max_ls...>;
+class LinearEnv : public Env<2, F, save_qs_t, max_ls...> {
+ public:
+  using parent_type = Env<2, F, save_qs_t, max_ls...>;
+  using parent_type::dim_ls;
+  using parent_type::parent_type;
+
+  typename parent_type::tensor_r_type init_reward() const override {
+    typename parent_type::tensor_r_type res;
+    for (int_type i = 0; i < dim_ls[0]; ++i) {
+      for (int_type j = 0; j < dim_ls[1]; ++j) {
+        res(i, j) = -(cs_[0] * i + cs_[1] * j);
+      }
+    }
+    return res;
+  }
+
+ protected:
+  using parent_type::cs_;
+};
+
+#include <iostream>
 
 template <typename F, bool save_qs_t, int_type... max_ls>
-class ConvexEnv : public LinearEnv<F, save_qs_t, max_ls...> {
-  using env_type = LinearEnv<F, save_qs_t, max_ls...>;
-  using env_type::cs_;
-  using env_type::states_;
-
+class ConvexEnv : public Env<2, F, save_qs_t, max_ls...> {
  public:
-  using env_type::env_type;
+  using parent_type = Env<2, F, save_qs_t, max_ls...>;
+  using parent_type::dim_ls;
+  using parent_type::parent_type;
 
-  typename env_type::float_type reward() const override {
-    return -(cs_[0] * states_[0] + cs_[1] * states_[1] * states_[1]);
+  typename parent_type::tensor_r_type init_reward() const override {
+    typename parent_type::tensor_r_type res;
+    for (int_type i = 0; i < dim_ls[0]; ++i) {
+      for (int_type j = 0; j < dim_ls[1]; ++j) {
+        res(i, j) = -(cs_[0] * i + cs_[1] * j * j);
+      }
+    }
+    return res;
   }
+
+ protected:
+  using parent_type::cs_;
 };

@@ -19,6 +19,7 @@ class Env:
         self.__env = vars(planning_ext)[f"{type}_env_{int(save_q)}_{ls[0]}_{ls[1]}"](
             cs, self.pus, self.pds
         )
+        self.__env.init_once()
         self._policy = None
 
     def __repr__(self):
@@ -81,6 +82,10 @@ class Env:
     @property
     def qs(self):
         return self.__env.qs if self.save_q else None
+
+    @property
+    def reward_mat(self):
+        return self.__env.reward_mat
 
     @property
     def policy(self):
