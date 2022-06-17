@@ -32,18 +32,19 @@ if(SKBUILD)
   set(Python_EXECUTABLE "${PYTHON_EXECUTABLE}")
   set(Python_INCLUDE_DIR "${PYTHON_INCLUDE_DIR}")
   set(Python_LIBRARIES "${PYTHON_LIBRARY}")
+
+  find_package(Python COMPONENTS Interpreter Development REQUIRED)
+
+  execute_process(
+    COMMAND
+    "${PYTHON_EXECUTABLE}" -c "import nanobind; print(nanobind.cmake_dir())"
+    OUTPUT_VARIABLE _tmp_dir
+    OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ECHO STDOUT)
+  list(APPEND CMAKE_PREFIX_PATH "${_tmp_dir}")
+  find_package(nanobind CONFIG REQUIRED)
 endif()
 
-find_package(Python COMPONENTS Interpreter Development REQUIRED)
 find_path(DBG_MACRO_INCLUDE_DIRS "dbg.h")
-
-execute_process(
-  COMMAND
-  "${PYTHON_EXECUTABLE}" -c "import nanobind; print(nanobind.cmake_dir())"
-  OUTPUT_VARIABLE _tmp_dir
-  OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ECHO STDOUT)
-list(APPEND CMAKE_PREFIX_PATH "${_tmp_dir}")
-find_package(nanobind CONFIG REQUIRED)
 
 set(BUILD_TESTING OFF CACHE INTERNAL "" FORCE)
 add_subdirectory(Fastor)
