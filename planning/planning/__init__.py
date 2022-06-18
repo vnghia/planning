@@ -9,33 +9,25 @@ from .planning_ext import *
 
 
 class Env:
-    def __init__(self, ls, cs, pus=None, pds=None, type="linear", save_q=False):
+    def __init__(self, ls, param, type="linear", save_q=False):
         self.ls = ls
-        self.cs = cs
-        self.pus = pus if pus is not None else [0.1, 0.1]
-        self.pds = pds if pds is not None else [0.3, 0.3]
+        self.param = np.array(param)
         self.type = type
         self.save_q = save_q
         self.__env = vars(planning_ext)[f"{type}_env_{int(save_q)}_{ls[0]}_{ls[1]}"](
-            cs, self.pus, self.pds
+            self.param
         )
-        self.__env.init_once()
         self._policy = None
 
     def __repr__(self):
-        return (
-            f"{self.type}_env: "
-            f"ls: {self.ls} cs: {self.cs} pus: {self.pus} pds: {self.pds} save_q: {self.save_q}"
-        )
+        return f"{self.type}_env: " f"ls: {self.ls} param: {self.param}"
 
     def __getstate__(self):
         state = io.BytesIO()
         np.savez_compressed(
             state,
             ls=self.ls,
-            cs=self.cs,
-            pus=self.pus,
-            pds=self.pds,
+            param=self.param,
             type=self.type,
             save_q=self.save_q,
             q=self.q,
@@ -49,9 +41,7 @@ class Env:
         data = np.load(io.BytesIO(state), allow_pickle=True)
         self.__init__(
             data["ls"],
-            data["cs"],
-            data["pus"],
-            data["pds"],
+            data["param"],
             data["type"].item(),
             data["save_q"].item(),
         )
@@ -140,16 +130,19 @@ class Env:
         ax = ax or plt.axes()
         x1 = np.linspace(0, self.ls[0], 100)
         x2 = np.linspace(0, self.ls[1], 100)
-        ax.plot(x1, self.cs[0] / self.pds[0] * x1, label="ratio 0")
+
+        r1 = self.param[0, 0] / self.param[0, 2]
+        ax.plot(x1, r1 * x1, label="ratio 0")
+
+        r2 = self.param[1, 0] / self.param[1, 2]
         if self.type == "convex":
-            y2 = self.cs[1] / self.pds[1] * x2**2
+            y2 = r2 * x2**2
         else:
-            y2 = self.cs[1] / self.pds[1] * x2
+            y2 = r2 * x2
         ax.plot(x2, y2, label="ratio 1")
+
         ax.legend()
-        ax.set_title(
-            f"ratio {(self.cs[0] / self.pds[0]) / (self.cs[1] / self.pds[1])}{info}"
-        )
+        ax.set_title(f"ratio {r1/r2}{info}")
 
     def show_n_visit(self, info=""):
         fig = plt.figure(figsize=plt.figaspect(0.5))
@@ -174,7 +167,7 @@ class Env:
         ax1.set_xticks(_x)
         ax1.set_ylabel("L2")
         ax1.set_yticks(_y)
-        ax1.set_title(f"action 0")
+        ax1.set_title("action 0")
         ax1.set_ylim(ax1.get_ylim()[::-1])
 
         ax2 = fig.add_subplot(1, 2, 2, projection="3d")
@@ -193,25 +186,23 @@ class Env:
         ax2.set_xticks(_x)
         ax2.set_ylabel("L2")
         ax2.set_yticks(_y)
-        ax2.set_title(f"action 1")
+        ax2.set_title("action 1")
         ax2.set_ylim(ax2.get_ylim()[::-1])
 
         fig.suptitle(f"n_visit{info}")
 
     @classmethod
     def init_and_train(
-        cls, ls, cs, pus, pds, type, save_q, gamma, eps, decay, epoch, learns, lr_pow
+        cls, ls, param, type, save_q, gamma, eps, decay, epoch, learns, lr_pow
     ):
-        env = cls(ls, cs, pus, pds, type, save_q)
+        env = cls(ls, param, type, save_q)
         env.train(gamma, eps, decay, epoch, learns, lr_pow)
         return env
 
     @staticmethod
     def param(
         ls,
-        cs,
-        pus=None,
-        pds=None,
+        param,
         type="linear",
         save_q=False,
         gamma=0.9,
@@ -223,9 +214,7 @@ class Env:
     ):
         return (
             ls,
-            cs,
-            pus,
-            pds,
+            param,
             type,
             save_q,
             gamma,

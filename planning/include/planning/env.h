@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <random>
 #include <utility>
@@ -11,80 +12,71 @@
 
 using int_type = int;
 
-template <int_type n_queue_t, typename F, bool save_qs_t, int_type... max_ls>
+template <int_type... i>
+static constexpr std::initializer_list<int_type> gen_init_list(
+    std::integer_sequence<int_type, i...>) {
+  return {i...};
+}
+
+template <typename T, typename L, int_type... i>
+static constexpr auto to_index(const T& a, const L& l,
+                               std::integer_sequence<int_type, i...>) {
+  return std::make_tuple(a(i)..., l);
+}
+
+template <typename T, int_type... i>
+static constexpr auto to_index(const T& a,
+                               std::integer_sequence<int_type, i...>) {
+  return std::make_tuple(a(i)...);
+}
+
+template <int_type n_queue_t, typename F, bool save_qs_t, int_type... max_lens>
 class Env {
  public:
-  static constexpr int_type n_queue = n_queue_t;
-  static constexpr int_type n_transition = 2 * n_queue + 1;
-  static constexpr int_type n_total = ((max_ls + 1) * ...) * n_queue;
-  static constexpr bool save_qs = save_qs_t;
-
   using float_type = F;
+
+  static constexpr auto n_queue = n_queue_t;
+  static constexpr auto save_qs = save_qs_t;
+  static constexpr auto n_transition = 2 * n_queue + 1;
+  static constexpr auto n_total = ((max_lens + 1) * ...) * n_queue;
+
+  using env_param_type = Fastor::Tensor<float_type, n_queue, 3>;
+  using prob_type = Fastor::Tensor<float_type, n_transition>;
+
+  using q_type = Fastor::Tensor<float_type, max_lens + 1 ..., n_queue>;
+  using n_visit_type = Fastor::Tensor<int_type, max_lens + 1 ..., n_queue>;
+  using qs_type = std::vector<float_type>;
+  using reward_mat_type = Fastor::Tensor<float_type, max_lens + 1 ...>;
 
   using array_fq_type = Fastor::Tensor<float_type, n_queue>;
   using array_iq_type = Fastor::Tensor<int_type, n_queue>;
   using array_bq_type = Fastor::Tensor<bool, n_queue>;
 
-  using std_vector_f_type = std::vector<float_type>;
-  using std_array_i_type = std::array<int_type, n_queue>;
-
-  using tensor_f_type = Fastor::Tensor<float_type, max_ls + 1 ..., n_queue>;
-  using tensor_i_type = Fastor::Tensor<int_type, max_ls + 1 ..., n_queue>;
-  using tensor_r_type = Fastor::Tensor<float_type, max_ls + 1 ...>;
-
-  using array_ft_type = Fastor::Tensor<float_type, n_transition>;
-  using array_it_type = Fastor::Tensor<float_type, n_transition>;
-
-  static constexpr std_array_i_type dim_ls = {max_ls + 1 ...};
-
+  static constexpr std::array<int_type, n_queue> dim_queue = {max_lens + 1 ...};
+  static constexpr auto idx_nq =
+      std::make_integer_sequence<int_type, n_queue>{};
   static constexpr auto iota_nq = ([]() {
-    std_array_i_type a;
+    std::array<int_type, n_queue> a;
     std::iota(a.begin(), a.end(), 0);
     return a;
   })();
 
-  template <int_type current, std_array_i_type l, int_type... before,
-            int_type... after>
-  static constexpr auto gen_inf_index(
-      std::integer_sequence<int_type, before...>,
-      std::integer_sequence<int_type, after...>) {
-    return std::make_tuple(Fastor::fseq<0, l[before]>{}...,
-                           Fastor::fseq<0, 1>{},
-                           Fastor::fseq<0, l[after + current + 1]>{}...,
-                           Fastor::fseq<current, current + 1>{});
-  }
-
-  template <std_array_i_type l, int_type... i>
-  static constexpr auto gen_inf_indices(
-      std::integer_sequence<int_type, i...> is) {
-    return std::make_tuple(gen_inf_index<i, l>(
-        std::make_integer_sequence<int_type, i>{},
-        std::make_integer_sequence<int_type, is.size() - i - 1>{})...);
-  }
-
-  static constexpr auto idx_nq =
-      std::make_integer_sequence<int_type, n_queue>{};
-  static constexpr auto idx_nq_1 =
-      std::make_integer_sequence<int_type, n_queue + 1>{};
-  static constexpr auto inf_idxs = gen_inf_indices<dim_ls>(idx_nq);
-
- public:
-  Env(const std_vector_f_type& cs, const std_vector_f_type& pus,
-      const std_vector_f_type& pds)
-      : cs_(cs), pus_(pus), pds_(pds) {}
-
-  void init_once() { this->reward_mat_ = this->init_reward(); }
+  Env(const env_param_type& env_param, const reward_mat_type& reward_mat)
+      : env_param_(env_param), reward_mat_(reward_mat) {}
 
   void reset_train() {
     q_.zeros();
+
     std::apply(
         [this](auto&&... indices) {
           ((std::apply(this->q_, indices) =
                 -std::numeric_limits<float_type>::infinity()),
            ...);
         },
-        inf_idxs);
-    std::apply(q_, gen_index_0(idx_nq_1)) = 0;
+        gen_inf_indices(idx_nq));
+    std::apply(
+        q_, gen_index_0(std::make_integer_sequence<int_type, n_queue + 1>{})) =
+        0;
 
     n_visit_.zeros();
   }
@@ -94,17 +86,19 @@ class Env {
     states_.zeros();
   }
 
-  virtual array_ft_type prob(int_type action) {
-    array_bq_type allow_u = (states_ < max_ls_);
-    array_fq_type pus = pus_ * allow_u.template cast<float_type>();
+  prob_type prob(int_type action) {
+    array_bq_type allow_u = (states_ < max_lens_);
+    array_fq_type pus = env_param_(Fastor::all, Fastor::fix<1>);
+    pus *= allow_u.template cast<float_type>();
 
     array_bq_type allow_d = (action == actions_) && (states_ > 0);
-    array_fq_type pds = pds_ * allow_d.template cast<float_type>();
+    array_fq_type pds = env_param_(Fastor::all, Fastor::fix<2>);
+    pds *= allow_d.template cast<float_type>();
 
-    array_ft_type p;
+    prob_type p;
     p(Fastor::fseq<0, n_queue>{}) = pus;
     p(Fastor::fseq<n_queue, 2 * n_queue>{}) = pds;
-    p(Fastor::fix<2 * n_queue>) = 1 - Fastor::sum(pus) - Fastor::sum(pds);
+    p(Fastor::fix<2 * n_queue>) = 1 - sum(pus) - sum(pds);
     return p;
   }
 
@@ -193,57 +187,32 @@ class Env {
     }
   }
 
-  const tensor_f_type& q() const { return q_; }
-  const tensor_i_type& n_visit() const { return n_visit_; }
-  const std_vector_f_type& qs() const { return qs_; }
-  const tensor_r_type& reward_mat() const { return reward_mat_; }
-
- protected:
-  array_fq_type cs_;
-  array_fq_type pus_;
-  array_fq_type pds_;
-  array_iq_type states_;
-
-  static constexpr array_iq_type max_ls_ = {max_ls...};
+  const q_type& q() const { return q_; }
+  const n_visit_type& n_visit() const { return n_visit_; }
+  const qs_type& qs() const { return qs_; }
+  const reward_mat_type& reward_mat() const { return reward_mat_; }
 
  private:
-  virtual tensor_r_type init_reward() const { return {}; }
+  const env_param_type env_param_;
+
+  array_iq_type states_;
+
+  q_type q_;
+  n_visit_type n_visit_;
+  qs_type qs_;
+
+  const reward_mat_type reward_mat_;
 
   static const inline array_iq_type actions_ = iota_nq;
-
-  tensor_f_type q_;
-  tensor_i_type n_visit_;
-  std_vector_f_type qs_;
-  tensor_r_type reward_mat_;
-
-  std::mt19937_64 rng;
-  std::uniform_real_distribution<float_type> eps_dis;
-
-  template <typename T, typename L, int_type... i>
-  static constexpr auto to_index(const T& a, const L& l,
-                                 std::integer_sequence<int_type, i...>) {
-    return std::make_tuple(a(i)..., l);
-  }
-
-  template <typename T, int_type... i>
-  static constexpr auto to_index(const T& a,
-                                 std::integer_sequence<int_type, i...>) {
-    return std::make_tuple(a(i)...);
-  }
-
-  template <int_type... i>
-  static constexpr auto gen_index_0(std::integer_sequence<int_type, i...> is) {
-    return std::make_tuple(Fastor::fix<0 * i>...);
-  }
-
+  static constexpr array_iq_type max_lens_ = {max_lens...};
   static const inline auto transitions_ = ([]() {
     Fastor::Tensor<int_type, n_queue, n_queue> tu;
     tu.zeros();
-    Fastor::diag(tu) = 1;
+    diag(tu) = 1;
 
     Fastor::Tensor<int_type, n_queue, n_queue> td;
     td.zeros();
-    Fastor::diag(td) = -1;
+    diag(td) = -1;
 
     Fastor::Tensor<int_type, n_transition, n_queue> result;
     result(Fastor::fseq<0, n_queue>{}, Fastor::all) = tu;
@@ -251,48 +220,78 @@ class Env {
     result(Fastor::fix<n_transition - 1>, Fastor::all) = 0;
     return result;
   })();
+
+  std::mt19937_64 rng;
+  std::uniform_real_distribution<float_type> eps_dis;
+
+  template <int_type... i>
+  static constexpr auto gen_index_0(std::integer_sequence<int_type, i...>) {
+    return std::make_tuple(Fastor::fix<0 * i>...);
+  }
+
+  template <int_type current, int_type... before, int_type... after>
+  static constexpr auto gen_inf_index(
+      std::integer_sequence<int_type, before...>,
+      std::integer_sequence<int_type, after...>) {
+    return std::make_tuple(Fastor::fseq<0, dim_queue[before]>{}...,
+                           Fastor::fseq<0, 1>{},
+                           Fastor::fseq<0, dim_queue[after + current + 1]>{}...,
+                           Fastor::fix<current>);
+  }
+
+  template <int_type... i>
+  static constexpr auto gen_inf_indices(
+      std::integer_sequence<int_type, i...> is) {
+    return std::make_tuple(gen_inf_index<i>(
+        std::make_integer_sequence<int_type, i>{},
+        std::make_integer_sequence<int_type, is.size() - i - 1>{})...);
+  }
 };
 
-template <typename F, bool save_qs_t, int_type... max_ls>
-class LinearEnv : public Env<2, F, save_qs_t, max_ls...> {
+template <typename F, bool save_qs_t, int_type... max_lens>
+class LinearEnv : public Env<2, F, save_qs_t, max_lens...> {
  public:
-  using parent_type = Env<2, F, save_qs_t, max_ls...>;
-  using parent_type::dim_ls;
-  using parent_type::parent_type;
+  using parent_type = Env<2, F, save_qs_t, max_lens...>;
+  using parent_type::dim_queue;
+  using float_type = typename parent_type::float_type;
 
-  typename parent_type::tensor_r_type init_reward() const override {
-    typename parent_type::tensor_r_type res;
-    for (int_type i = 0; i < dim_ls[0]; ++i) {
-      for (int_type j = 0; j < dim_ls[1]; ++j) {
-        res(i, j) = -(cs_[0] * i + cs_[1] * j);
+  LinearEnv(const typename parent_type::env_param_type& env_param)
+      : parent_type(env_param, init_reward(env_param)) {}
+
+  typename parent_type::reward_mat_type init_reward(
+      const typename parent_type::env_param_type& env_param) const {
+    typename parent_type::reward_mat_type res;
+    float_type c1 = env_param(0, 0);
+    float_type c2 = env_param(1, 0);
+    for (int_type i = 0; i < dim_queue[0]; ++i) {
+      for (int_type j = 0; j < dim_queue[1]; ++j) {
+        res(i, j) = -(c1 * i + c2 * j);
       }
     }
     return res;
   }
-
- protected:
-  using parent_type::cs_;
 };
 
-#include <iostream>
-
-template <typename F, bool save_qs_t, int_type... max_ls>
-class ConvexEnv : public Env<2, F, save_qs_t, max_ls...> {
+template <typename F, bool save_qs_t, int_type... max_lens>
+class ConvexEnv : public Env<2, F, save_qs_t, max_lens...> {
  public:
-  using parent_type = Env<2, F, save_qs_t, max_ls...>;
-  using parent_type::dim_ls;
-  using parent_type::parent_type;
+  using parent_type = Env<2, F, save_qs_t, max_lens...>;
+  using parent_type::dim_queue;
+  using float_type = typename parent_type::float_type;
 
-  typename parent_type::tensor_r_type init_reward() const override {
-    typename parent_type::tensor_r_type res;
-    for (int_type i = 0; i < dim_ls[0]; ++i) {
-      for (int_type j = 0; j < dim_ls[1]; ++j) {
-        res(i, j) = -(cs_[0] * i + cs_[1] * j * j);
+  ConvexEnv(const typename parent_type::env_param_type& env_param)
+      : parent_type(env_param, init_reward(env_param)) {}
+
+  typename parent_type::reward_mat_type init_reward(
+      const typename parent_type::env_param_type& env_param) const {
+    typename parent_type::reward_mat_type res;
+    float_type c1 = env_param(0, 0);
+    float_type c2 = env_param(1, 0);
+    for (int_type i = 0; i < dim_queue[0]; ++i) {
+      for (int_type j = 0; j < dim_queue[1]; ++j) {
+        res(i, j) = -(c1 * i + c2 * j * j);
       }
     }
     return res;
   }
-
- protected:
-  using parent_type::cs_;
 };

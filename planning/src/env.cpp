@@ -1,5 +1,6 @@
 #include "planning/env.h"
 
+#include <memory>
 #include <string>
 
 #include "nanobind/nanobind.h"
@@ -19,9 +20,9 @@ template <typename env_type, typename data_type, typename vec_type,
           int_type... i>
 constexpr auto gen_q(const vec_type &v, std::integer_sequence<int_type, i...>) {
   constexpr auto dim = std::array<size_t, env_type::n_queue + 1>{
-      env_type::dim_ls[i]..., env_type::n_queue};
+      env_type::dim_queue[i]..., env_type::n_queue};
   return nb::tensor<nb::numpy, data_type,
-                    nb::shape<env_type::dim_ls[i]..., env_type::n_queue>>(
+                    nb::shape<env_type::dim_queue[i]..., env_type::n_queue>>(
       v.data(), env_type::n_queue + 1, dim.data());
 }
 
@@ -32,10 +33,10 @@ constexpr auto gen_qs(const vec_type &v,
   const auto n_first = v.size() / env_type::n_total;
   return nb::tensor<
       nb::numpy, data_type,
-      nb::shape<nb::any, env_type::dim_ls[i]..., env_type::n_queue>>(
+      nb::shape<nb::any, env_type::dim_queue[i]..., env_type::n_queue>>(
       const_cast<data_type *>(v.data()), env_type::n_queue + 2,
-      std::array<size_t, env_type::n_queue + 2>{n_first, env_type::dim_ls[i]...,
-                                                env_type::n_queue}
+      std::array<size_t, env_type::n_queue + 2>{
+          n_first, env_type::dim_queue[i]..., env_type::n_queue}
           .data());
 }
 
@@ -44,43 +45,48 @@ template <typename env_type, typename data_type, typename vec_type,
 constexpr auto gen_reward(const vec_type &v,
                           std::integer_sequence<int_type, i...>) {
   constexpr auto dim =
-      std::array<size_t, env_type::n_queue>{env_type::dim_ls[i]...};
-  return nb::tensor<nb::numpy, data_type, nb::shape<env_type::dim_ls[i]...>>(
+      std::array<size_t, env_type::n_queue>{env_type::dim_queue[i]...};
+  return nb::tensor<nb::numpy, data_type, nb::shape<env_type::dim_queue[i]...>>(
       const_cast<data_type *>(v.data()), env_type::n_queue, dim.data());
 }
 
 template <typename env_type, int_type... i>
 constexpr auto gen_from_array(std::integer_sequence<int_type, i...>) {
   using env_float_type = typename env_type::float_type;
-  return [](env_type &e,
-            nb::tensor<nb::numpy, env_float_type,
-                       nb::shape<env_type::dim_ls[i]..., env_type::n_queue>>
-                q,
-            nb::tensor<nb::numpy, int_type,
-                       nb::shape<env_type::dim_ls[i]..., env_type::n_queue>>
-                n_visit,
-            nb::tensor<
-                nb::numpy, env_float_type,
-                nb::shape<nb::any, env_type::dim_ls[i]..., env_type::n_queue>>
-                qs,
-            size_t qs_size) {
-    e.from_array(static_cast<env_float_type *>(q.data()),
-                 static_cast<int_type *>(n_visit.data()),
-                 static_cast<env_float_type *>(qs.data()), qs_size);
-  };
+  return
+      [](env_type &e,
+         nb::tensor<nb::numpy, env_float_type,
+                    nb::shape<env_type::dim_queue[i]..., env_type::n_queue>>
+             q,
+         nb::tensor<nb::numpy, int_type,
+                    nb::shape<env_type::dim_queue[i]..., env_type::n_queue>>
+             n_visit,
+         nb::tensor<
+             nb::numpy, env_float_type,
+             nb::shape<nb::any, env_type::dim_queue[i]..., env_type::n_queue>>
+             qs,
+         size_t qs_size) {
+        e.from_array(static_cast<env_float_type *>(q.data()),
+                     static_cast<int_type *>(n_visit.data()),
+                     static_cast<env_float_type *>(qs.data()), qs_size);
+      };
 }
 
 template <typename env_type, const char *prefix>
 const auto gen_env(nb::module_ &m) {
   static const auto name = prefix + std::to_string(env_type::save_qs) + "_" +
-                           std::to_string(env_type::dim_ls[0] - 1) + "_" +
-                           std::to_string(env_type::dim_ls[1] - 1);
+                           std::to_string(env_type::dim_queue[0] - 1) + "_" +
+                           std::to_string(env_type::dim_queue[1] - 1);
 
   using env_float_type = typename env_type::float_type;
   nb::class_<env_type>(m, name.c_str())
-      .def(nb::init<const typename env_type::std_vector_f_type &,
-                    const typename env_type::std_vector_f_type &,
-                    const typename env_type::std_vector_f_type &>())
+      .def("__init__",
+           [](env_type *env, nb::tensor<nb::numpy, env_float_type,
+                                        nb::shape<env_type::n_queue, 3>>
+                                 env_param) {
+             new (env)
+                 env_type(static_cast<env_float_type *>(env_param.data()));
+           })
       .def(
           "train",
           [](env_type &e, env_float_type gamma = 0.9, env_float_type eps = 0.01,
@@ -111,8 +117,7 @@ const auto gen_env(nb::module_ &m) {
                                return gen_reward<env_type, env_float_type>(
                                    e.reward_mat(), env_type::idx_nq);
                              })
-      .def("from_array", gen_from_array<env_type>(env_type::idx_nq))
-      .def("init_once", [](env_type &e) { e.init_once(); });
+      .def("from_array", gen_from_array<env_type>(env_type::idx_nq));
 }
 
 template <template <typename F, bool save_qs_t, int_type... max_ls> class EnvT,
@@ -143,6 +148,9 @@ NB_MODULE(planning_ext, m) {
   static constexpr auto is = std::make_integer_sequence<int_type, 18>{};
   static constexpr int_type si = 3;
   using f_t = double;
+
+  nb::class_<f_t>(m, "float_type");
+  nb::class_<int_type>(m, "int_type");
 
   static constexpr char linear_prefix[] = "linear_env_";
   gen_env_square<LinearEnv, f_t, linear_prefix, si>(m, is);
