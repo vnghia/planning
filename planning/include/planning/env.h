@@ -12,22 +12,31 @@
 
 using int_type = int;
 
-template <int_type... i>
-static constexpr std::initializer_list<int_type> gen_init_list(
-    std::integer_sequence<int_type, i...>) {
+template <typename T>
+concept is_indexable = requires(T t) {
+  t[0];
+};
+
+template <typename T, int_type... i>
+static constexpr T gen_iota(std::integer_sequence<int_type, i...>) {
   return {i...};
 }
 
-template <typename T, typename L, int_type... i>
-static constexpr auto to_index(const T& a, const L& l,
-                               std::integer_sequence<int_type, i...>) {
-  return std::make_tuple(a(i)..., l);
+template <typename T, int_type... i>
+static constexpr T gen_trans(std::integer_sequence<int_type, i...>) {
+  return {i - i + 1 ..., i - i - 1 ..., 0};
 }
 
-template <typename T, int_type... i>
-static constexpr auto to_index(const T& a,
-                               std::integer_sequence<int_type, i...>) {
-  return std::make_tuple(a(i)...);
+template <typename T, typename... prefixes_type, int_type... i,
+          typename... postfixes_type>
+static constexpr auto to_index(const T& a, prefixes_type... prefixes,
+                               std::integer_sequence<int_type, i...>,
+                               postfixes_type... postfixes) {
+  if constexpr (is_indexable<T>) {
+    return std::make_tuple(prefixes..., a[i]..., postfixes...);
+  } else {
+    return std::make_tuple(prefixes..., a(i)..., postfixes...);
+  }
 }
 
 template <int_type n_queue_t, typename F, bool save_qs_t, int_type... max_lens>
@@ -52,14 +61,13 @@ class Env {
   using array_iq_type = Fastor::Tensor<int_type, n_queue>;
   using array_bq_type = Fastor::Tensor<bool, n_queue>;
 
+  using iq_type = Fastor::TensorMap<int_type, n_queue>;
+
   static constexpr std::array<int_type, n_queue> dim_queue = {max_lens + 1 ...};
   static constexpr auto idx_nq =
       std::make_integer_sequence<int_type, n_queue>{};
-  static constexpr auto iota_nq = ([]() {
-    std::array<int_type, n_queue> a;
-    std::iota(a.begin(), a.end(), 0);
-    return a;
-  })();
+  static constexpr auto iota_nq =
+      gen_iota<std::array<int_type, n_queue>>(idx_nq);
 
   Env(const env_param_type& env_param, const reward_mat_type& reward_mat)
       : env_param_(env_param), reward_mat_(reward_mat) {}
@@ -68,15 +76,15 @@ class Env {
     q_.zeros();
 
     std::apply(
-        [this](auto&&... indices) {
-          ((std::apply(this->q_, indices) =
+        [this](auto&&... idx) {
+          ((std::apply(this->q_, idx) =
                 -std::numeric_limits<float_type>::infinity()),
            ...);
         },
         gen_inf_indices(idx_nq));
     std::apply(
-        q_, gen_index_0(std::make_integer_sequence<int_type, n_queue + 1>{})) =
-        0;
+        q_, to_index(std::array<decltype(Fastor::fix<0>), n_queue + 1>{},
+                     std::make_integer_sequence<int_type, n_queue + 1>{})) = 0;
 
     n_visit_.zeros();
   }
@@ -106,8 +114,9 @@ class Env {
     auto p = prob(action);
     auto idx = std::discrete_distribution<int_type>(
         p.data(), p.data() + n_transition)(rng);
-    array_iq_type t = transitions_(idx, Fastor::all);
-    return states_ + t;
+    array_iq_type nstates = states_;
+    nstates(idx % n_queue) += transitions_[idx];
+    return nstates;
   }
 
   void train(float_type gamma = 0.9, float_type eps = 0.01,
@@ -141,9 +150,9 @@ class Env {
                 iota_nq.begin(), iota_nq.end(),
                 [this](int_type largest, int_type current) {
                   return std::apply(this->q_,
-                                    to_index(this->states_, largest, idx_nq)) <
+                                    to_index(this->states_, idx_nq, largest)) <
                          std::apply(this->q_,
-                                    to_index(this->states_, current, idx_nq));
+                                    to_index(this->states_, idx_nq, current));
                 });
             a = *max_it;
           }
@@ -154,12 +163,12 @@ class Env {
         auto max_nit = std::max_element(
             iota_nq.begin(), iota_nq.end(),
             [this, &nstates](int_type largest, int_type current) {
-              return std::apply(this->q_, to_index(nstates, largest, idx_nq)) <
-                     std::apply(this->q_, to_index(nstates, current, idx_nq));
+              return std::apply(this->q_, to_index(nstates, idx_nq, largest)) <
+                     std::apply(this->q_, to_index(nstates, idx_nq, current));
             });
-        float_type nq = std::apply(q_, to_index(nstates, *max_nit, idx_nq));
+        float_type nq = std::apply(q_, to_index(nstates, idx_nq, *max_nit));
 
-        const auto st_index = to_index(states_, a, idx_nq);
+        const auto st_index = to_index(states_, idx_nq, a);
 
         auto reward = std::apply(reward_mat_, to_index(nstates, idx_nq));
         const float_type lr =
@@ -203,31 +212,14 @@ class Env {
 
   const reward_mat_type reward_mat_;
 
-  static const inline array_iq_type actions_ = iota_nq;
+  static constexpr auto actions_ =
+      iq_type(const_cast<int_type*>(iota_nq.data()));
   static constexpr array_iq_type max_lens_ = {max_lens...};
-  static const inline auto transitions_ = ([]() {
-    Fastor::Tensor<int_type, n_queue, n_queue> tu;
-    tu.zeros();
-    diag(tu) = 1;
-
-    Fastor::Tensor<int_type, n_queue, n_queue> td;
-    td.zeros();
-    diag(td) = -1;
-
-    Fastor::Tensor<int_type, n_transition, n_queue> result;
-    result(Fastor::fseq<0, n_queue>{}, Fastor::all) = tu;
-    result(Fastor::fseq<n_queue, 2 * n_queue>{}, Fastor::all) = td;
-    result(Fastor::fix<n_transition - 1>, Fastor::all) = 0;
-    return result;
-  })();
+  static constexpr auto transitions_ =
+      gen_trans<std::array<int_type, n_transition>>(idx_nq);
 
   std::mt19937_64 rng;
   std::uniform_real_distribution<float_type> eps_dis;
-
-  template <int_type... i>
-  static constexpr auto gen_index_0(std::integer_sequence<int_type, i...>) {
-    return std::make_tuple(Fastor::fix<0 * i>...);
-  }
 
   template <int_type current, int_type... before, int_type... after>
   static constexpr auto gen_inf_index(
