@@ -28,8 +28,7 @@ static constexpr auto gen_trans(std::integer_sequence<int_type, i...>) {
   std::array<int_type, n_transition> trans{};
   std::fill_n(trans.begin(), n_queue, 1);
   std::fill_n(trans.begin() + n_queue, n_queue, -1);
-  trans[2 * n_queue - 1] = 0;
-  (std::fill_n(trans.begin() + 2 * n_queue + i * n_queue, n_queue, i), ...);
+  (std::fill_n(trans.begin() + 2 * n_queue - 1 + i * n_queue, n_queue, i), ...);
   return trans;
 }
 
@@ -54,16 +53,15 @@ class Env {
   static constexpr auto n_queue = n_queue_t;
   static constexpr auto n_env = n_env_t;
   static constexpr auto save_qs = save_qs_t;
-  static constexpr auto n_transition = 2 * n_queue + 1 + n_queue * n_env;
+  static constexpr auto n_transition = 2 * n_queue + n_queue * n_env;
   static constexpr auto n_total = ((max_lens + 1) * ...) * n_queue;
 
   using env_param_type = Fastor::Tensor<float_type, n_env, n_queue, 3>;
-  using prob_type = Fastor::Tensor<float_type, n_transition>;
+  using prob_type = Fastor::Tensor<float_type, n_transition + 1>;
 
   using q_type = Fastor::Tensor<float_type, max_lens + 1 ..., n_queue>;
   using n_visit_type = Fastor::Tensor<int_type, max_lens + 1 ..., n_queue>;
   using qs_type = std::vector<float_type>;
-  using reward_mat_type = Fastor::Tensor<float_type, max_lens + 1 ...>;
   using env_prob_type = Fastor::Tensor<float_type, n_env, n_queue>;
 
   using array_fq_type = Fastor::Tensor<float_type, n_queue>;
@@ -83,9 +81,8 @@ class Env {
   static constexpr auto iota_nq =
       gen_iota<std::array<int_type, n_queue>>(idx_nq);
 
-  Env(const env_param_type& env_param, const env_prob_type& env_prob,
-      const reward_mat_type& reward_mat)
-      : env_param_(env_param), env_prob_(env_prob), reward_mat_(reward_mat) {}
+  Env(const env_param_type& env_param, const env_prob_type& env_prob)
+      : env_param_(env_param), env_prob_(env_prob) {}
 
   void reset_train() {
     q_.zeros();
@@ -150,10 +147,19 @@ class Env {
   array_iq_type step(int_type action) {
     auto p = prob(action);
     auto idx = std::discrete_distribution<int_type>(
-        p.data(), p.data() + n_transition)(rng);
+        p.data(), p.data() + n_transition + 1)(rng);
     array_iq_type nstates = states_;
-    nstates(idx % n_queue) += transitions_[idx];
+    if (idx < 2 * n_queue) {
+      nstates(idx % n_queue) += transitions_[idx];
+    } else if (idx < n_transition) {
+      env_states_(idx % n_queue) = transitions_[idx];
+    }
     return nstates;
+  }
+
+  virtual float_type reward(const array_iq_type& states,
+                            const array_iq_type& env_states) const {
+    return 0;
   }
 
   void train(float_type gamma = 0.9, float_type eps = 0.01,
@@ -207,11 +213,11 @@ class Env {
 
         const auto st_index = to_index(states_, idx_nq, a);
 
-        auto reward = std::apply(reward_mat_, to_index(nstates, idx_nq));
+        auto r = reward(nstates, this->env_states_);
         const float_type lr =
             std::pow(std::apply(n_visit_, st_index) + 1, -lr_pow);
         std::apply(q_, st_index) +=
-            lr * (reward + gamma * nq - std::apply(q_, st_index));
+            lr * (r + gamma * nq - std::apply(q_, st_index));
 
         if constexpr (save_qs) {
           std::copy(q_.data(), q_.data() + n_total,
@@ -236,10 +242,11 @@ class Env {
   const q_type& q() const { return q_; }
   const n_visit_type& n_visit() const { return n_visit_; }
   const qs_type& qs() const { return qs_; }
-  const reward_mat_type& reward_mat() const { return reward_mat_; }
+
+ protected:
+  const env_param_type env_param_;
 
  private:
-  const env_param_type env_param_;
   const env_prob_type env_prob_;
 
   array_iq_type states_;
@@ -248,8 +255,6 @@ class Env {
   q_type q_;
   n_visit_type n_visit_;
   qs_type qs_;
-
-  const reward_mat_type reward_mat_;
 
   static constexpr auto actions_ =
       iq_type(const_cast<int_type*>(iota_nq.data()));
@@ -283,25 +288,20 @@ template <int_type n_env_t, typename F, bool save_qs_t, int_type... max_lens>
 class LinearEnv : public Env<n_env_t, 2, F, save_qs_t, max_lens...> {
  public:
   using parent_type = Env<n_env_t, 2, F, save_qs_t, max_lens...>;
-  using parent_type::dim_queue;
+
+ protected:
+  using parent_type::env_param_;
+
+ public:
+  using parent_type::parent_type;
+
   using float_type = typename parent_type::float_type;
-  using env_param_type = typename parent_type::env_param_type;
-  using env_prob_type = typename parent_type::env_prob_type;
+  using array_iq_type = typename parent_type::array_iq_type;
 
-  LinearEnv(const env_param_type& env_param, const env_prob_type& env_prob)
-      : parent_type(env_param, env_prob, init_reward(env_param)) {}
-
-  typename parent_type::reward_mat_type init_reward(
-      const env_param_type& env_param) const {
-    typename parent_type::reward_mat_type res;
-    float_type c1 = env_param(0, 0, 0);
-    float_type c2 = env_param(0, 1, 0);
-    for (int_type i = 0; i < dim_queue[0]; ++i) {
-      for (int_type j = 0; j < dim_queue[1]; ++j) {
-        res(i, j) = -(c1 * i + c2 * j);
-      }
-    }
-    return res;
+  float_type reward(const array_iq_type& states,
+                    const array_iq_type& env_states) const override {
+    return -(states(0) * env_param_(env_states(0), 0, 0) +
+             states(1) * env_param_(env_states(1), 1, 0));
   }
 };
 
@@ -309,24 +309,19 @@ template <int_type n_env_t, typename F, bool save_qs_t, int_type... max_lens>
 class ConvexEnv : public Env<n_env_t, 2, F, save_qs_t, max_lens...> {
  public:
   using parent_type = Env<n_env_t, 2, F, save_qs_t, max_lens...>;
-  using parent_type::dim_queue;
+
+ protected:
+  using parent_type::env_param_;
+
+ public:
+  using parent_type::parent_type;
+
   using float_type = typename parent_type::float_type;
-  using env_param_type = typename parent_type::env_param_type;
-  using env_prob_type = typename parent_type::env_prob_type;
+  using array_iq_type = typename parent_type::array_iq_type;
 
-  ConvexEnv(const env_param_type& env_param, const env_prob_type& env_prob)
-      : parent_type(env_param, env_prob, init_reward(env_param)) {}
-
-  typename parent_type::reward_mat_type init_reward(
-      const env_param_type& env_param) const {
-    typename parent_type::reward_mat_type res;
-    float_type c1 = env_param(0, 0, 0);
-    float_type c2 = env_param(0, 1, 0);
-    for (int_type i = 0; i < dim_queue[0]; ++i) {
-      for (int_type j = 0; j < dim_queue[1]; ++j) {
-        res(i, j) = -(c1 * i + c2 * j * j);
-      }
-    }
-    return res;
+  float_type reward(const array_iq_type& states,
+                    const array_iq_type& env_states) const override {
+    return -(states(0) * env_param_(env_states(0), 0, 0) +
+             states(1) * states(1) * env_param_(env_states(1), 1, 0));
   }
 };

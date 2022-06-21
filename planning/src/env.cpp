@@ -117,11 +117,6 @@ const auto gen_env(nb::module_ &m) {
                                return gen_qs<env_type, env_float_type>(
                                    e.qs(), env_type::idx_nq);
                              })
-      .def_property_readonly("reward_mat",
-                             [](const env_type &e) {
-                               return gen_reward<env_type, env_float_type>(
-                                   e.reward_mat(), env_type::idx_nq);
-                             })
       .def("from_array", gen_from_array<env_type>(env_type::idx_nq));
 }
 

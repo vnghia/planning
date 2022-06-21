@@ -9,14 +9,18 @@ from .planning_ext import *
 
 
 class Env:
-    def __init__(self, ls, param, type="linear", save_q=False):
+    def __init__(self, ls, param, prob=None, type="linear", save_q=False):
         self.ls = ls
-        self.param = np.array(param)
+        self.param = np.array(param).reshape((-1, 2, 3))
+        self.n_env = self.param.shape[0]
+        self.prob = (
+            np.array(prob).reshape((-1, 2)) if self.n_env > 1 else np.zeros((1, 2))
+        )
         self.type = type
         self.save_q = save_q
-        self.__env = vars(planning_ext)[f"{type}_env_{int(save_q)}_{ls[0]}_{ls[1]}"](
-            self.param
-        )
+        self.__env = vars(planning_ext)[
+            f"{type}_env_{self.n_env}_{int(save_q)}_{ls[0]}_{ls[1]}"
+        ](self.param, self.prob)
         self._policy = None
 
     def __repr__(self):
@@ -200,7 +204,7 @@ class Env:
         return env
 
     @staticmethod
-    def param(
+    def get_param(
         ls,
         param,
         type="linear",
