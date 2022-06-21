@@ -28,7 +28,7 @@ static constexpr auto gen_trans(std::integer_sequence<int_type, i...>) {
   std::array<int_type, n_transition> trans{};
   std::fill_n(trans.begin(), n_queue, 1);
   std::fill_n(trans.begin() + n_queue, n_queue, -1);
-  (std::fill_n(trans.begin() + 2 * n_queue - 1 + i * n_queue, n_queue, i), ...);
+  (std::fill_n(trans.begin() + 2 * n_queue + i * n_queue, n_queue, i), ...);
   return trans;
 }
 
@@ -139,7 +139,7 @@ class Env {
                     2 * n_queue + (i + 1) * n_queue)) = pis;
     }
 
-    p(Fastor::fix<2 * n_queue>) = prob_dummy;
+    p(Fastor::fix<-1>) = prob_dummy;
 
     return p;
   }
@@ -149,10 +149,12 @@ class Env {
     auto idx = std::discrete_distribution<int_type>(
         p.data(), p.data() + n_transition + 1)(rng);
     array_iq_type nstates = states_;
+
+    const auto idx_q = idx % n_queue;
     if (idx < 2 * n_queue) {
-      nstates(idx % n_queue) += transitions_[idx];
+      nstates(idx_q) += transitions_[idx];
     } else if (idx < n_transition) {
-      env_states_(idx % n_queue) = transitions_[idx];
+      env_states_(idx_q) = transitions_[idx];
     }
     return nstates;
   }
@@ -213,7 +215,8 @@ class Env {
 
         const auto st_index = to_index(states_, idx_nq, a);
 
-        auto r = reward(nstates, this->env_states_);
+        const auto r = reward(nstates, this->env_states_);
+
         const float_type lr =
             std::pow(std::apply(n_visit_, st_index) + 1, -lr_pow);
         std::apply(q_, st_index) +=
