@@ -74,18 +74,23 @@ constexpr auto gen_from_array(std::integer_sequence<int_type, i...>) {
 
 template <typename env_type, const char *prefix>
 const auto gen_env(nb::module_ &m) {
-  static const auto name = prefix + std::to_string(env_type::save_qs) + "_" +
+  static const auto name = prefix + std::to_string(env_type::n_env) + "_" +
+                           std::to_string(env_type::save_qs) + "_" +
                            std::to_string(env_type::dim_queue[0] - 1) + "_" +
                            std::to_string(env_type::dim_queue[1] - 1);
 
   using env_float_type = typename env_type::float_type;
   nb::class_<env_type>(m, name.c_str())
       .def("__init__",
-           [](env_type *env, nb::tensor<nb::numpy, env_float_type,
-                                        nb::shape<env_type::n_queue, 3>>
-                                 env_param) {
-             new (env)
-                 env_type(static_cast<env_float_type *>(env_param.data()));
+           [](env_type *env,
+              nb::tensor<nb::numpy, env_float_type,
+                         nb::shape<env_type::n_env, env_type::n_queue, 3>>
+                  env_param,
+              nb::tensor<nb::numpy, env_float_type,
+                         nb::shape<env_type::n_env, env_type::n_queue>>
+                  env_prob) {
+             new (env) env_type(static_cast<env_float_type *>(env_param.data()),
+                                static_cast<env_float_type *>(env_prob.data()));
            })
       .def(
           "train",
@@ -120,28 +125,38 @@ const auto gen_env(nb::module_ &m) {
       .def("from_array", gen_from_array<env_type>(env_type::idx_nq));
 }
 
-template <template <typename F, bool save_qs_t, int_type... max_ls> class EnvT,
-          typename f_t, const char *prefix, bool save_qs, int_type i,
-          int_type sj, int_type... j>
+template <
+    template <int_type n_env_t, typename F, bool save_qs_t, int_type... max_ls>
+    class EnvT,
+    int_type n_env_t, typename f_t, const char *prefix, bool save_qs,
+    int_type i, int_type sj, int_type... j>
 const auto gen_env_1d(nb::module_ &m, std::integer_sequence<int_type, j...>) {
-  (gen_env<EnvT<f_t, save_qs, i, j + sj>, prefix>(m), ...);
+  (gen_env<EnvT<n_env_t, f_t, save_qs, i, j + sj>, prefix>(m), ...);
 }
 
-template <template <typename F, bool save_qs_t, int_type... max_ls> class EnvT,
-          typename f_t, const char *prefix, int_type si, int_type sj,
-          int_type... i, int_type... j>
+template <
+    template <int_type n_env_t, typename F, bool save_qs_t, int_type... max_ls>
+    class EnvT,
+    typename f_t, const char *prefix, int_type si, int_type sj, int_type... i,
+    int_type... j>
 const auto gen_env_2d(nb::module_ &m, std::integer_sequence<int_type, i...>,
                       std::integer_sequence<int_type, j...> js) {
-  (gen_env_1d<EnvT, f_t, prefix, true, i + si, sj>(m, js), ...);
-  (gen_env_1d<EnvT, f_t, prefix, false, i + si, sj>(m, js), ...);
+  (gen_env_1d<EnvT, 1, f_t, prefix, true, i + si, sj>(m, js), ...);
+  (gen_env_1d<EnvT, 1, f_t, prefix, false, i + si, sj>(m, js), ...);
+  (gen_env_1d<EnvT, 2, f_t, prefix, true, i + si, sj>(m, js), ...);
+  (gen_env_1d<EnvT, 2, f_t, prefix, false, i + si, sj>(m, js), ...);
 }
 
-template <template <typename F, bool save_qs_t, int_type... max_ls> class EnvT,
-          typename f_t, const char *prefix, int_type si, int_type... i>
+template <
+    template <int_type n_env_t, typename F, bool save_qs_t, int_type... max_ls>
+    class EnvT,
+    typename f_t, const char *prefix, int_type si, int_type... i>
 const auto gen_env_square(nb::module_ &m,
                           std::integer_sequence<int_type, i...>) {
-  (gen_env<EnvT<f_t, true, i + si, i + si>, prefix>(m), ...);
-  (gen_env<EnvT<f_t, false, i + si, i + si>, prefix>(m), ...);
+  (gen_env<EnvT<1, f_t, true, i + si, i + si>, prefix>(m), ...);
+  (gen_env<EnvT<1, f_t, false, i + si, i + si>, prefix>(m), ...);
+  (gen_env<EnvT<2, f_t, true, i + si, i + si>, prefix>(m), ...);
+  (gen_env<EnvT<2, f_t, false, i + si, i + si>, prefix>(m), ...);
 }
 
 NB_MODULE(planning_ext, m) {

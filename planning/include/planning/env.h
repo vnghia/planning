@@ -22,9 +22,15 @@ static constexpr T gen_iota(std::integer_sequence<int_type, i...>) {
   return {i...};
 }
 
-template <typename T, int_type... i>
-static constexpr T gen_trans(std::integer_sequence<int_type, i...>) {
-  return {i - i + 1 ..., i - i - 1 ..., 0};
+template <int_type n_transition, int_type n_queue, int_type n_env,
+          int_type... i>
+static constexpr auto gen_trans(std::integer_sequence<int_type, i...>) {
+  std::array<int_type, n_transition> trans{};
+  std::fill_n(trans.begin(), n_queue, 1);
+  std::fill_n(trans.begin() + n_queue, n_queue, -1);
+  trans[2 * n_queue - 1] = 0;
+  (std::fill_n(trans.begin() + 2 * n_queue + i * n_queue, n_queue, i), ...);
+  return trans;
 }
 
 template <typename T, typename... prefixes_type, int_type... i,
@@ -39,38 +45,47 @@ static constexpr auto to_index(const T& a, prefixes_type... prefixes,
   }
 }
 
-template <int_type n_queue_t, typename F, bool save_qs_t, int_type... max_lens>
+template <int_type n_env_t, int_type n_queue_t, typename F, bool save_qs_t,
+          int_type... max_lens>
 class Env {
  public:
   using float_type = F;
 
   static constexpr auto n_queue = n_queue_t;
+  static constexpr auto n_env = n_env_t;
   static constexpr auto save_qs = save_qs_t;
-  static constexpr auto n_transition = 2 * n_queue + 1;
+  static constexpr auto n_transition = 2 * n_queue + 1 + n_queue * n_env;
   static constexpr auto n_total = ((max_lens + 1) * ...) * n_queue;
 
-  using env_param_type = Fastor::Tensor<float_type, n_queue, 3>;
+  using env_param_type = Fastor::Tensor<float_type, n_env, n_queue, 3>;
   using prob_type = Fastor::Tensor<float_type, n_transition>;
 
   using q_type = Fastor::Tensor<float_type, max_lens + 1 ..., n_queue>;
   using n_visit_type = Fastor::Tensor<int_type, max_lens + 1 ..., n_queue>;
   using qs_type = std::vector<float_type>;
   using reward_mat_type = Fastor::Tensor<float_type, max_lens + 1 ...>;
+  using env_prob_type = Fastor::Tensor<float_type, n_env, n_queue>;
 
   using array_fq_type = Fastor::Tensor<float_type, n_queue>;
   using array_iq_type = Fastor::Tensor<int_type, n_queue>;
   using array_bq_type = Fastor::Tensor<bool, n_queue>;
+
+  using array_fe_type = Fastor::Tensor<float_type, n_env>;
+  using array_ie_type = Fastor::Tensor<int_type, n_env>;
+  using array_be_type = Fastor::Tensor<bool, n_env>;
 
   using iq_type = Fastor::TensorMap<int_type, n_queue>;
 
   static constexpr std::array<int_type, n_queue> dim_queue = {max_lens + 1 ...};
   static constexpr auto idx_nq =
       std::make_integer_sequence<int_type, n_queue>{};
+  static constexpr auto idx_ne = std::make_integer_sequence<int_type, n_env>{};
   static constexpr auto iota_nq =
       gen_iota<std::array<int_type, n_queue>>(idx_nq);
 
-  Env(const env_param_type& env_param, const reward_mat_type& reward_mat)
-      : env_param_(env_param), reward_mat_(reward_mat) {}
+  Env(const env_param_type& env_param, const env_prob_type& env_prob,
+      const reward_mat_type& reward_mat)
+      : env_param_(env_param), env_prob_(env_prob), reward_mat_(reward_mat) {}
 
   void reset_train() {
     q_.zeros();
@@ -92,21 +107,43 @@ class Env {
   void reset(std::mt19937_64::result_type seed = 42) {
     rng.seed(seed);
     states_.zeros();
+    env_states_.zeros();
   }
 
   prob_type prob(int_type action) {
     array_bq_type allow_u = (states_ < max_lens_);
-    array_fq_type pus = env_param_(Fastor::all, Fastor::fix<1>);
+    array_fq_type pus;
+    for (size_t i = 0; i < n_queue; ++i) {
+      pus(i) = env_param_(env_states_(i), i, 1);
+    }
+
     pus *= allow_u.template cast<float_type>();
 
     array_bq_type allow_d = (action == actions_) && (states_ > 0);
-    array_fq_type pds = env_param_(Fastor::all, Fastor::fix<2>);
+    array_fq_type pds;
+    for (size_t i = 0; i < n_queue; ++i) {
+      pds(i) = env_param_(env_states_(i), i, 2);
+    }
     pds *= allow_d.template cast<float_type>();
 
     prob_type p;
     p(Fastor::fseq<0, n_queue>{}) = pus;
     p(Fastor::fseq<n_queue, 2 * n_queue>{}) = pds;
-    p(Fastor::fix<2 * n_queue>) = 1 - sum(pus) - sum(pds);
+    float_type prob_dummy = 1 - sum(pus) - sum(pds);
+
+    array_be_type allow_i;
+    array_fq_type pis;
+    for (int_type i = 0; i < n_env; ++i) {
+      allow_i = (env_states_ != i);
+      pis = env_prob_(i, Fastor::all);
+      pis *= allow_i.template cast<float_type>();
+      prob_dummy -= Fastor::sum(pis);
+      p(Fastor::seq(2 * n_queue + i * n_queue,
+                    2 * n_queue + (i + 1) * n_queue)) = pis;
+    }
+
+    p(Fastor::fix<2 * n_queue>) = prob_dummy;
+
     return p;
   }
 
@@ -203,8 +240,10 @@ class Env {
 
  private:
   const env_param_type env_param_;
+  const env_prob_type env_prob_;
 
   array_iq_type states_;
+  array_iq_type env_states_;
 
   q_type q_;
   n_visit_type n_visit_;
@@ -216,7 +255,7 @@ class Env {
       iq_type(const_cast<int_type*>(iota_nq.data()));
   static constexpr array_iq_type max_lens_ = {max_lens...};
   static constexpr auto transitions_ =
-      gen_trans<std::array<int_type, n_transition>>(idx_nq);
+      gen_trans<n_transition, n_queue, n_env>(idx_ne);
 
   std::mt19937_64 rng;
   std::uniform_real_distribution<float_type> eps_dis;
@@ -240,21 +279,23 @@ class Env {
   }
 };
 
-template <typename F, bool save_qs_t, int_type... max_lens>
-class LinearEnv : public Env<2, F, save_qs_t, max_lens...> {
+template <int_type n_env_t, typename F, bool save_qs_t, int_type... max_lens>
+class LinearEnv : public Env<n_env_t, 2, F, save_qs_t, max_lens...> {
  public:
-  using parent_type = Env<2, F, save_qs_t, max_lens...>;
+  using parent_type = Env<n_env_t, 2, F, save_qs_t, max_lens...>;
   using parent_type::dim_queue;
   using float_type = typename parent_type::float_type;
+  using env_param_type = typename parent_type::env_param_type;
+  using env_prob_type = typename parent_type::env_prob_type;
 
-  LinearEnv(const typename parent_type::env_param_type& env_param)
-      : parent_type(env_param, init_reward(env_param)) {}
+  LinearEnv(const env_param_type& env_param, const env_prob_type& env_prob)
+      : parent_type(env_param, env_prob, init_reward(env_param)) {}
 
   typename parent_type::reward_mat_type init_reward(
-      const typename parent_type::env_param_type& env_param) const {
+      const env_param_type& env_param) const {
     typename parent_type::reward_mat_type res;
-    float_type c1 = env_param(0, 0);
-    float_type c2 = env_param(1, 0);
+    float_type c1 = env_param(0, 0, 0);
+    float_type c2 = env_param(0, 1, 0);
     for (int_type i = 0; i < dim_queue[0]; ++i) {
       for (int_type j = 0; j < dim_queue[1]; ++j) {
         res(i, j) = -(c1 * i + c2 * j);
@@ -264,21 +305,23 @@ class LinearEnv : public Env<2, F, save_qs_t, max_lens...> {
   }
 };
 
-template <typename F, bool save_qs_t, int_type... max_lens>
-class ConvexEnv : public Env<2, F, save_qs_t, max_lens...> {
+template <int_type n_env_t, typename F, bool save_qs_t, int_type... max_lens>
+class ConvexEnv : public Env<n_env_t, 2, F, save_qs_t, max_lens...> {
  public:
-  using parent_type = Env<2, F, save_qs_t, max_lens...>;
+  using parent_type = Env<n_env_t, 2, F, save_qs_t, max_lens...>;
   using parent_type::dim_queue;
   using float_type = typename parent_type::float_type;
+  using env_param_type = typename parent_type::env_param_type;
+  using env_prob_type = typename parent_type::env_prob_type;
 
-  ConvexEnv(const typename parent_type::env_param_type& env_param)
-      : parent_type(env_param, init_reward(env_param)) {}
+  ConvexEnv(const env_param_type& env_param, const env_prob_type& env_prob)
+      : parent_type(env_param, env_prob, init_reward(env_param)) {}
 
   typename parent_type::reward_mat_type init_reward(
-      const typename parent_type::env_param_type& env_param) const {
+      const env_param_type& env_param) const {
     typename parent_type::reward_mat_type res;
-    float_type c1 = env_param(0, 0);
-    float_type c2 = env_param(1, 0);
+    float_type c1 = env_param(0, 0, 0);
+    float_type c2 = env_param(0, 1, 0);
     for (int_type i = 0; i < dim_queue[0]; ++i) {
       for (int_type j = 0; j < dim_queue[1]; ++j) {
         res(i, j) = -(c1 * i + c2 * j * j);
