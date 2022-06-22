@@ -26,6 +26,7 @@ endif()
 
 set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -ffast-math")
+set(CMAKE_CXX_FLAGS "-finline-functions -finline-limit=50000 -mllvm -inline-threshold=50000")
 
 if(SKBUILD)
   set(Python_VERSION "${PYTHON_VERSION_STRING}")
