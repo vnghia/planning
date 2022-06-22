@@ -2,10 +2,8 @@
 
 #include <array>
 #include <cmath>
-#include <initializer_list>
 #include <limits>
 #include <random>
-#include <utility>
 #include <vector>
 
 #include "Fastor/Fastor.h"
@@ -34,7 +32,7 @@ static constexpr auto gen_trans(std::integer_sequence<int_type, i...> is) {
 template <const auto& a, int_type i, int_type... j, int_type... k>
 static constexpr auto gen_inf_index(std::integer_sequence<int_type, j...>,
                                     std::integer_sequence<int_type, k...>) {
-  return std::make_tuple(Fastor::fseq<0, a[j]>{}..., Fastor::fseq<0, 1>{},
+  return std::make_tuple(Fastor::fseq<0, a[j]>{}..., Fastor::fix<0>,
                          Fastor::fseq<0, a[k + i + 1]>{}..., Fastor::fix<i>);
 }
 
@@ -57,13 +55,13 @@ static constexpr auto env_prob_assign(auto& p, const auto& e, const auto& a,
   ((p(offset + i) = a(i) * e(idx, i)), ...);
 }
 
-template <typename T, typename... prefixes_type, int_type... i, typename... postfixes_type>
-static constexpr auto to_index(const T& a, prefixes_type... prefixes,
+template <typename... prefixes_type, int_type... i, typename... postfixes_type>
+static constexpr auto&& access(auto& q, const auto& a, prefixes_type... prefixes,
                                std::integer_sequence<int_type, i...>, postfixes_type... postfixes) {
-  if constexpr (is_indexable<T>) {
-    return std::make_tuple(prefixes..., a[i]..., postfixes...);
+  if constexpr (is_indexable<decltype(a)>) {
+    return q(prefixes..., a[i]..., postfixes...);
   } else {
-    return std::make_tuple(prefixes..., a(i)..., postfixes...);
+    return q(prefixes..., a(i)..., postfixes...);
   }
 }
 
@@ -84,8 +82,6 @@ class Env {
   using env_param_type = Fastor::Tensor<float_type, n_env, n_queue, 3>;
   using env_prob_type = Fastor::Tensor<float_type, n_env, n_queue>;
 
-  using prob_type = Fastor::Tensor<float_type, n_transition + 1>;
-
   using q_type = Fastor::Tensor<float_type, max_lens_t + 1 ..., n_queue>;
   using n_visit_type = Fastor::Tensor<int_type, max_lens_t + 1 ..., n_queue>;
 
@@ -95,10 +91,6 @@ class Env {
   using array_fq_type = Fastor::Tensor<float_type, n_queue>;
   using array_iq_type = Fastor::Tensor<int_type, n_queue>;
   using array_bq_type = Fastor::Tensor<bool, n_queue>;
-
-  using array_fe_type = Fastor::Tensor<float_type, n_env>;
-  using array_ie_type = Fastor::Tensor<int_type, n_env>;
-  using array_be_type = Fastor::Tensor<bool, n_env>;
 
   using iq_type = Fastor::TensorMap<int_type, n_queue>;
 
@@ -119,8 +111,8 @@ class Env {
           ((std::apply(this->q_, idx) = -std::numeric_limits<float_type>::infinity()), ...);
         },
         inf_indices);
-    std::apply(q_, to_index(std::array<int_type, n_queue + 1>{},
-                            std::make_integer_sequence<int_type, n_queue + 1>{})) = 0;
+    access(q_, std::array<int_type, n_queue + 1>{},
+           std::make_integer_sequence<int_type, n_queue + 1>{}) = 0;
 
     n_visit_.zeros();
   }
@@ -131,11 +123,11 @@ class Env {
     env_states_.zeros();
   }
 
-  prob_type prob(int_type action) {
+  auto prob(int_type action) {
     array_bq_type allow_u = (states_ < max_lens_);
     array_bq_type allow_d = (action == actions_) && (states_ > 0);
 
-    prob_type p;
+    Fastor::Tensor<float_type, n_transition + 1> p;
     state_prob_assign<0, 1>(p, env_param_, env_states_, allow_u, idx_nq);
     state_prob_assign<n_queue, 2>(p, env_param_, env_states_, allow_d, idx_nq);
 
@@ -189,8 +181,7 @@ class Env {
         } else {
           auto max_it = std::max_element(
               iota_nq.begin(), iota_nq.end(), [this](int_type largest, int_type current) {
-                return std::apply(this->q_, to_index(this->states_, idx_nq, largest)) <
-                       std::apply(this->q_, to_index(this->states_, idx_nq, current));
+                return access(q_, states_, idx_nq, largest) < access(q_, states_, idx_nq, current);
               });
           a = *max_it;
         }
@@ -199,23 +190,20 @@ class Env {
 
         auto max_nit = std::max_element(
             iota_nq.begin(), iota_nq.end(), [this, &nstates](int_type largest, int_type current) {
-              return std::apply(this->q_, to_index(nstates, idx_nq, largest)) <
-                     std::apply(this->q_, to_index(nstates, idx_nq, current));
+              return access(q_, nstates, idx_nq, largest) < access(q_, nstates, idx_nq, current);
             });
-        float_type nq = std::apply(q_, to_index(nstates, idx_nq, *max_nit));
 
-        const auto st_index = to_index(states_, idx_nq, a);
+        const float_type nq = access(q_, nstates, idx_nq, *max_nit);
+        const auto r = reward(nstates, env_states_);
+        const float_type lr = std::pow(access(n_visit_, states_, idx_nq, a) + 1, -lr_pow);
 
-        const auto r = reward(nstates, this->env_states_);
-
-        const float_type lr = std::pow(std::apply(n_visit_, st_index) + 1, -lr_pow);
-        std::apply(q_, st_index) += lr * (r + gamma * nq - std::apply(q_, st_index));
+        access(q_, states_, idx_nq, a) += lr * (r + gamma * nq - access(q_, states_, idx_nq, a));
 
         if constexpr (save_qs) {
           std::copy(q_.data(), q_.data() + n_total, qs_.begin() + i * ls + j * n_total);
         }
 
-        std::apply(n_visit_, st_index) += 1;
+        access(n_visit_, states_, idx_nq, a) += 1;
         states_ = nstates;
       }
     }
