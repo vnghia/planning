@@ -46,6 +46,7 @@ if(SKBUILD)
 endif()
 
 find_path(DBG_MACRO_INCLUDE_DIRS "dbg.h")
+find_path(PCG_INCLUDE_DIRS "pcg_extras.hpp")
 
 set(BUILD_TESTING OFF CACHE INTERNAL "" FORCE)
 add_subdirectory(Fastor)

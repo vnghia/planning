@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Fastor/Fastor.h"
+#include "pcg_random.hpp"
 
 using int_type = int;
 
@@ -117,7 +118,7 @@ class Env {
     n_visit_.zeros();
   }
 
-  void reset(std::mt19937_64::result_type seed = 42) {
+  void reset(pcg32::state_type seed = 42) {
     rng_.seed(seed);
     states_.zeros();
     env_states_.zeros();
@@ -163,7 +164,7 @@ class Env {
 
   void train(float_type gamma = 0.9, float_type eps = 0.01, float_type decay = 0.5,
              int_type epoch = 1, uint64_t ls = 20000000, float_type lr_pow = 0.51,
-             std::mt19937_64::result_type seed = 42) {
+             pcg32::state_type seed = 42) {
     reset_train();
 
     if constexpr (save_qs) {
@@ -238,7 +239,7 @@ class Env {
   static constexpr array_iq_type max_lens_ = {max_lens_t...};
   static constexpr auto transitions_ = gen_trans<n_transition, n_queue>(idx_ne);
 
-  std::mt19937_64 rng_;
+  pcg32 rng_;
   std::uniform_real_distribution<float_type> eps_dis_;
 };
 
