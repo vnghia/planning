@@ -26,7 +26,12 @@ endif()
 
 set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -ffast-math")
-set(CMAKE_CXX_FLAGS "-finline-functions -finline-limit=50000 -mllvm -inline-threshold=50000")
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mllvm -inline-threshold=50000")
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -finline-functions -finline-limit=50000")
+endif()
 
 if(SKBUILD)
   set(Python_VERSION "${PYTHON_VERSION_STRING}")
