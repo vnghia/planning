@@ -9,7 +9,7 @@ from .planning_ext import *
 
 
 class Env:
-    def __init__(self, ls, param, prob=None, type="linear", save_q=False):
+    def __init__(self, ls, param, prob=None, type="linear", save_qs=False):
         self.ls = ls
         self.param = np.array(param).reshape((-1, 2, 3))
         self.n_env = self.param.shape[0]
@@ -17,9 +17,9 @@ class Env:
             np.array(prob).reshape((-1, 2)) if self.n_env > 1 else np.zeros((1, 2))
         )
         self.type = type
-        self.save_q = save_q
+        self.save_qs = save_qs
         self.__env = vars(planning_ext)[
-            f"{type}_env_{self.n_env}_{int(save_q)}_{ls[0]}_{ls[1]}"
+            f"{type}_env_{self.n_env}_{int(save_qs)}_{ls[0]}_{ls[1]}"
         ](self.param, self.prob)
         self._policy = None
 
@@ -33,7 +33,7 @@ class Env:
             ls=self.ls,
             param=self.param,
             type=self.type,
-            save_q=self.save_q,
+            save_qs=self.save_qs,
             q=self.q,
             n_visit=self.n_visit,
             qs=self.qs,
@@ -47,14 +47,14 @@ class Env:
             data["ls"],
             data["param"],
             data["type"].item(),
-            data["save_q"].item(),
+            data["save_qs"].item(),
         )
 
         q = data["q"]
         n_visit = data["n_visit"]
         qs = (
             np.zeros(shape=(0,) + q.shape, dtype=q.dtype)
-            if not self.save_q
+            if not self.save_qs
             else data["qs"]
         )
 
@@ -75,7 +75,7 @@ class Env:
 
     @property
     def qs(self):
-        return self.__env.qs if self.save_q else None
+        return self.__env.qs if self.save_qs else None
 
     @property
     def reward_mat(self):
@@ -197,9 +197,9 @@ class Env:
 
     @classmethod
     def init_and_train(
-        cls, ls, param, type, save_q, gamma, eps, decay, epoch, learns, lr_pow
+        cls, ls, param, type, save_qs, gamma, eps, decay, epoch, learns, lr_pow
     ):
-        env = cls(ls, param, type, save_q)
+        env = cls(ls, param, type, save_qs)
         env.train(gamma, eps, decay, epoch, learns, lr_pow)
         return env
 
@@ -208,7 +208,7 @@ class Env:
         ls,
         param,
         type="linear",
-        save_q=False,
+        save_qs=False,
         gamma=0.9,
         eps=0.01,
         decay=0.5,
@@ -220,7 +220,7 @@ class Env:
             ls,
             param,
             type,
-            save_q,
+            save_qs,
             gamma,
             eps,
             decay,
