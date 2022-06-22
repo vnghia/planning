@@ -89,7 +89,6 @@ class Env {
   using qs_type = std::vector<float_type>;
   static constexpr auto n_total = q_type::size();
 
-  using array_fq_type = Fastor::Tensor<float_type, n_queue>;
   using array_iq_type = Fastor::Tensor<int_type, n_queue>;
   using array_bq_type = Fastor::Tensor<bool, n_queue>;
 
