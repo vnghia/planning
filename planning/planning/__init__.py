@@ -113,7 +113,7 @@ class Env:
                 plt.plot(q_cell[1], label="action 1", alpha=0.5)
                 plt.legend()
                 l1 = index[0] if index else i
-                l2 = index[1] if len(index) > 1 else j
+                l2 = index[1] if index and len(index) > 1 else j
                 plt.title(f"L1 = {l1} - L2 = {l2}{info}")
                 plt.show()
 
