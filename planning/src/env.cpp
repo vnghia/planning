@@ -155,16 +155,13 @@ const auto gen_env_square(nb::module_ &m,
 }
 
 NB_MODULE(planning_ext, m) {
-  static constexpr auto is = std::make_integer_sequence<int_type, 18>{};
-  static constexpr int_type si = 3;
+  static constexpr auto is =
+      std::integer_sequence<int_type, 3, 7, 10, 15, 20, 25, 30, 40, 50>{};
   using f_t = double;
 
-  nb::class_<f_t>(m, "float_type");
-  nb::class_<int_type>(m, "int_type");
-
   static constexpr char linear_prefix[] = "linear_env_";
-  gen_env_square<LinearEnv, f_t, linear_prefix, si>(m, is);
-
   static constexpr char convex_prefix[] = "convex_env_";
-  gen_env_square<ConvexEnv, f_t, convex_prefix, si>(m, is);
+
+  gen_env_square<LinearEnv, f_t, linear_prefix, 0>(m, is);
+  gen_env_square<ConvexEnv, f_t, convex_prefix, 0>(m, is);
 }
