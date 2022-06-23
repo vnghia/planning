@@ -80,8 +80,9 @@ class Env {
 
   static constexpr auto n_transition = 2 * n_queue + n_queue * n_env;
 
-  using env_param_type = Fastor::Tensor<float_type, n_env, n_queue, 3>;
-  using env_prob_type = Fastor::Tensor<float_type, n_env, n_queue>;
+  using env_cost_type = Fastor::Tensor<float_type, n_env, n_queue>;
+  using env_param_type = Fastor::Tensor<float_type, n_env, n_queue, 2>;
+  using env_prob_type = env_cost_type;
 
   using q_type = Fastor::Tensor<float_type, max_lens_t + 1 ..., n_queue>;
   using n_visit_type = Fastor::Tensor<int_type, max_lens_t + 1 ..., n_queue>;
@@ -100,8 +101,8 @@ class Env {
 
   static constexpr auto inf_indices = gen_inf_indices<dim_queue>(idx_nq);
 
-  Env(const env_param_type& env_param, const env_prob_type& env_prob)
-      : env_param_(env_param), env_prob_(env_prob) {}
+  Env(const env_cost_type& env_cost, const env_param_type& env_param, const env_prob_type& env_prob)
+      : env_cost_(env_cost), env_param_(env_param), env_prob_(env_prob) {}
 
   void reset_train() {
     q_.zeros();
@@ -128,8 +129,8 @@ class Env {
     array_bq_type allow_d = (action == actions_) && (states_ > 0);
 
     Fastor::Tensor<float_type, n_transition + 1> p;
-    state_prob_assign<0, 1>(p, env_param_, env_states_, allow_u, idx_nq);
-    state_prob_assign<n_queue, 2>(p, env_param_, env_states_, allow_d, idx_nq);
+    state_prob_assign<0, 0>(p, env_param_, env_states_, allow_u, idx_nq);
+    state_prob_assign<n_queue, 1>(p, env_param_, env_states_, allow_d, idx_nq);
 
     array_bq_type allow_e;
     ([ this, &allow_e, &p ]<int_type... i>(std::integer_sequence<int_type, i...>) {
@@ -222,9 +223,10 @@ class Env {
   const qs_type& qs() const { return qs_; }
 
  protected:
-  const env_param_type env_param_;
+  const env_cost_type env_cost_;
 
  private:
+  const env_param_type env_param_;
   const env_prob_type env_prob_;
 
   array_iq_type states_;
@@ -248,7 +250,7 @@ class LinearEnv : public Env<n_env_t, 2, F, save_qs_t, max_lens_t...> {
   using parent_type = Env<n_env_t, 2, F, save_qs_t, max_lens_t...>;
 
  protected:
-  using parent_type::env_param_;
+  using parent_type::env_cost_;
 
  public:
   using parent_type::parent_type;
@@ -257,8 +259,7 @@ class LinearEnv : public Env<n_env_t, 2, F, save_qs_t, max_lens_t...> {
   using array_iq_type = typename parent_type::array_iq_type;
 
   float_type reward(const array_iq_type& states, const array_iq_type& env_states) const override {
-    return -(states(0) * env_param_(env_states(0), 0, 0) +
-             states(1) * env_param_(env_states(1), 1, 0));
+    return -(states(0) * env_cost_(env_states(0), 0) + states(1) * env_cost_(env_states(1), 1));
   }
 };
 
@@ -268,7 +269,7 @@ class ConvexEnv : public Env<n_env_t, 2, F, save_qs_t, max_lens_t...> {
   using parent_type = Env<n_env_t, 2, F, save_qs_t, max_lens_t...>;
 
  protected:
-  using parent_type::env_param_;
+  using parent_type::env_cost_;
 
  public:
   using parent_type::parent_type;
@@ -277,7 +278,7 @@ class ConvexEnv : public Env<n_env_t, 2, F, save_qs_t, max_lens_t...> {
   using array_iq_type = typename parent_type::array_iq_type;
 
   float_type reward(const array_iq_type& states, const array_iq_type& env_states) const override {
-    return -(states(0) * env_param_(env_states(0), 0, 0) +
-             states(1) * states(1) * env_param_(env_states(1), 1, 0));
+    return -(states(0) * env_cost_(env_states(0), 0) +
+             states(1) * states(1) * env_cost_(env_states(1), 1));
   }
 };

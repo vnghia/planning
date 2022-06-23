@@ -11,9 +11,10 @@ from .planning_ext import *
 
 
 class Env:
-    def __init__(self, ls, param, prob=None, type="linear", save_qs=False):
+    def __init__(self, ls, cost, param, prob=None, type="linear", save_qs=False):
         self.ls = ls
-        self.param = np.array(param).reshape((-1, 2, 3))
+        self.cost = np.array(cost).reshape((-1, 2))
+        self.param = np.array(param).reshape((-1, 2, 2))
         self.n_env = self.param.shape[0]
         self.prob = (
             np.array(prob).reshape((-1, 2)) if self.n_env > 1 else np.zeros((1, 2))
@@ -22,13 +23,16 @@ class Env:
         self.save_qs = save_qs
         self.__env = vars(planning_ext)[
             f"{type}_env_{self.n_env}_{int(save_qs)}_{ls[0]}_{ls[1]}"
-        ](self.param, self.prob)
+        ](self.cost, self.param, self.prob)
         self._policy = None
 
     def __repr__(self):
         return (
             f"{self.type}_env: "
-            f"ls: {self.ls} param: {self.param} prob: {self.prob if self.n_env > 1 else ''}"
+            f"ls: {self.ls} "
+            f"cost: {self.cost} "
+            f"param: {self.param} "
+            f"prob: {self.prob}"
         )
 
     def __getstate__(self):
@@ -36,6 +40,7 @@ class Env:
         np.savez_compressed(
             state,
             ls=self.ls,
+            cost=self.cost,
             param=self.param,
             prob=self.prob,
             type=self.type,
@@ -51,6 +56,7 @@ class Env:
         data = np.load(io.BytesIO(state), allow_pickle=True)
         self.__init__(
             data["ls"],
+            data["cost"],
             data["param"],
             data["prob"],
             data["type"].item(),

@@ -84,12 +84,16 @@ const auto gen_env(nb::module_ &m) {
       .def("__init__",
            [](env_type *env,
               nb::tensor<nb::numpy, env_float_type,
-                         nb::shape<env_type::n_env, env_type::n_queue, 3>>
+                         nb::shape<env_type::n_env, env_type::n_queue>>
+                  env_cost,
+              nb::tensor<nb::numpy, env_float_type,
+                         nb::shape<env_type::n_env, env_type::n_queue, 2>>
                   env_param,
               nb::tensor<nb::numpy, env_float_type,
                          nb::shape<env_type::n_env, env_type::n_queue>>
                   env_prob) {
-             new (env) env_type(static_cast<env_float_type *>(env_param.data()),
+             new (env) env_type(static_cast<env_float_type *>(env_cost.data()),
+                                static_cast<env_float_type *>(env_param.data()),
                                 static_cast<env_float_type *>(env_prob.data()));
            })
       .def(
