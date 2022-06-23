@@ -11,25 +11,25 @@ from .planning_ext import *
 
 
 class Env:
-    def __init__(self, ls, cost, param, prob=None, type="linear", save_qs=False):
-        self.ls = ls
+    def __init__(self, lens, cost, param, prob=None, type=None, save_qs=None):
+        self.lens = lens
         self.cost = np.array(cost).reshape((-1, 2))
         self.param = np.array(param).reshape((-1, 2, 2))
         self.n_env = self.param.shape[0]
         self.prob = (
             np.array(prob).reshape((-1, 2)) if self.n_env > 1 else np.zeros((1, 2))
         )
-        self.type = type
-        self.save_qs = save_qs
+        self.type = type or "linear"
+        self.save_qs = save_qs or False
         self.__env = vars(planning_ext)[
-            f"{type}_env_{self.n_env}_{int(save_qs)}_{ls[0]}_{ls[1]}"
+            f"{type}_env_{self.n_env}_{int(save_qs)}_{lens[0]}_{lens[1]}"
         ](self.cost, self.param, self.prob)
         self._policy = None
 
     def __repr__(self):
         return (
             f"{self.type}_env: "
-            f"ls: {self.ls} "
+            f"lens: {self.lens} "
             f"cost: {self.cost} "
             f"param: {self.param} "
             f"prob: {self.prob}"
@@ -39,7 +39,7 @@ class Env:
         state = io.BytesIO()
         np.savez_compressed(
             state,
-            ls=self.ls,
+            lens=self.lens,
             cost=self.cost,
             param=self.param,
             prob=self.prob,
@@ -55,7 +55,7 @@ class Env:
     def __setstate__(self, state):
         data = np.load(io.BytesIO(state), allow_pickle=True)
         self.__init__(
-            data["ls"],
+            data["lens"],
             data["cost"],
             data["param"],
             data["prob"],
@@ -74,8 +74,17 @@ class Env:
         self.__env.from_array(q, n_visit, qs, qs.size)
         self._policy = data["policy"]
 
-    def train(self, gamma=0.9, eps=0.01, decay=0.5, epoch=1, ls=20000000, lr_pow=0.51):
-        self.__env.train(gamma, eps, decay, epoch, ls, lr_pow)
+    def train(
+        self, gamma=None, eps=None, decay=None, epoch=None, lens=None, lr_pow=None
+    ):
+        gamma = gamma or 0.9
+        eps = eps or 0.8
+        decay = decay or 0.5
+        epoch = epoch or 1
+        lens = lens or 100000000
+        lr_pow = lr_pow or 1
+
+        self.__env.train(gamma, eps, decay, epoch, lens, lr_pow)
         self._policy = np.argmax(self.q, axis=-1)
 
     @property
@@ -132,9 +141,9 @@ class Env:
 
     def show_cost(self, ax=None, info=""):
         ax = ax or plt.axes()
-        x1 = np.linspace(0, self.ls[0], 100)
+        x1 = np.linspace(0, self.lens[0], 100)
         y1 = x1
-        x2 = np.linspace(0, self.ls[1], 100)
+        x2 = np.linspace(0, self.lens[1], 100)
         y2 = x2
         if self.type == "convex":
             y2 = x2**2
@@ -148,9 +157,9 @@ class Env:
 
     def show_ratio(self, ax=None, info=""):
         ax = ax or plt.axes()
-        x1 = np.linspace(0, self.ls[0], 100)
+        x1 = np.linspace(0, self.lens[0], 100)
         y1 = x1
-        x2 = np.linspace(0, self.ls[1], 100)
+        x2 = np.linspace(0, self.lens[1], 100)
         y2 = x2
         if self.type == "convex":
             y2 = x2**2
@@ -168,8 +177,8 @@ class Env:
         a1 = self.n_visit[..., 0].ravel()
         a2 = self.n_visit[..., 1].ravel()
 
-        _x = np.arange(self.ls[0] + 1)
-        _y = np.arange(self.ls[1] + 1)
+        _x = np.arange(self.lens[0] + 1)
+        _y = np.arange(self.lens[1] + 1)
         _xx, _yy = np.meshgrid(_x, _y, indexing="ij")
         x, y = _xx.ravel(), _yy.ravel()
 
@@ -219,28 +228,39 @@ class Env:
 
     @classmethod
     def init_and_train(
-        cls, ls, param, prob, type, save_qs, gamma, eps, decay, epoch, learns, lr_pow
+        cls,
+        lens,
+        param,
+        prob=None,
+        type=None,
+        save_qs=None,
+        gamma=None,
+        eps=None,
+        decay=None,
+        epoch=None,
+        ls=None,
+        lr_pow=None,
     ):
-        env = cls(ls, param, prob, type, save_qs)
-        env.train(gamma, eps, decay, epoch, learns, lr_pow)
+        env = cls(lens, param, prob, type, save_qs)
+        env.train(gamma, eps, decay, epoch, ls, lr_pow)
         return env
 
     @staticmethod
     def get_param(
-        ls,
+        lens,
         param,
         prob=None,
-        type="linear",
-        save_qs=False,
-        gamma=0.9,
-        eps=0.01,
-        decay=0.5,
-        epoch=1,
-        learns=20000000,
-        lr_pow=0.51,
+        type=None,
+        save_qs=None,
+        gamma=None,
+        eps=None,
+        decay=None,
+        epoch=None,
+        ls=None,
+        lr_pow=None,
     ):
         return (
-            ls,
+            lens,
             param,
             prob,
             type,
@@ -249,7 +269,7 @@ class Env:
             eps,
             decay,
             epoch,
-            learns,
+            ls,
             lr_pow,
         )
 

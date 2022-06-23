@@ -118,7 +118,7 @@ class Env {
     n_visit_.zeros();
   }
 
-  void reset(pcg32::state_type seed = 42) {
+  void reset(pcg32::state_type seed) {
     rng_.seed(seed);
     states_.zeros();
     env_states_.zeros();
@@ -162,9 +162,8 @@ class Env {
     return 0;
   }
 
-  void train(float_type gamma = 0.9, float_type eps = 0.01, float_type decay = 0.5,
-             int_type epoch = 1, uint64_t ls = 20000000, float_type lr_pow = 0.51,
-             pcg32::state_type seed = 42) {
+  void train(float_type gamma, float_type eps, float_type decay, int_type epoch, uint64_t ls,
+             float_type lr_pow, pcg32::state_type seed) {
     reset_train();
 
     if constexpr (save_qs) {
