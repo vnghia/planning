@@ -11,7 +11,7 @@ from .planning_ext import *
 
 
 class Env:
-    def __init__(self, lens, cost, param, prob=None, type=None, save_qs=None):
+    def __init__(self, lens, cost, param, prob=None, C=None, type=None, save_qs=None):
         self.lens = lens
         self.cost = np.array(cost).reshape((-1, 2))
         self.param = np.array(param).reshape((-1, 2, 2))
@@ -19,11 +19,12 @@ class Env:
         self.prob = (
             np.array(prob).reshape((-1, 2)) if self.n_env > 1 else np.zeros((1, 2))
         )
+        self.C = C or 1
         self.type = type or "linear"
         self.save_qs = save_qs or False
         self.__env = vars(planning_ext)[
             f"{type}_env_{self.n_env}_{int(save_qs)}_{lens[0]}_{lens[1]}"
-        ](self.cost, self.param, self.prob)
+        ](self.cost, self.param / self.C, self.prob / self.C)
         self._policy = None
 
     def __repr__(self):
@@ -32,7 +33,8 @@ class Env:
             f"lens: {self.lens} "
             f"cost: {self.cost} "
             f"param: {self.param} "
-            f"prob: {self.prob}"
+            f"prob: {self.prob} "
+            f"C: {self.C}"
         )
 
     def __getstate__(self):
@@ -43,6 +45,7 @@ class Env:
             cost=self.cost,
             param=self.param,
             prob=self.prob,
+            C=self.C,
             type=self.type,
             save_qs=self.save_qs,
             q=self.q,
@@ -59,6 +62,7 @@ class Env:
             data["cost"],
             data["param"],
             data["prob"],
+            data["C"].item(),
             data["type"].item(),
             data["save_qs"].item(),
         )
@@ -232,6 +236,7 @@ class Env:
         lens,
         param,
         prob=None,
+        C=None,
         type=None,
         save_qs=None,
         gamma=None,
@@ -241,7 +246,7 @@ class Env:
         ls=None,
         lr_pow=None,
     ):
-        env = cls(lens, param, prob, type, save_qs)
+        env = cls(lens, param, prob, C, type, save_qs)
         env.train(gamma, eps, decay, epoch, ls, lr_pow)
         return env
 
@@ -250,6 +255,7 @@ class Env:
         lens,
         param,
         prob=None,
+        C=None,
         type=None,
         save_qs=None,
         gamma=None,
@@ -263,6 +269,7 @@ class Env:
             lens,
             param,
             prob,
+            C,
             type,
             save_qs,
             gamma,
