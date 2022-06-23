@@ -21,7 +21,7 @@ class Env:
         )
         self.C = C or 1
         self.type = type or "linear"
-        self.save_qs = save_qs or False
+        self.save_qs = bool(save_qs)
         self.__env = vars(planning_ext)[
             f"{type}_env_{self.n_env}_{int(save_qs)}_{lens[0]}_{lens[1]}"
         ](self.cost, self.param / self.C, self.prob / self.C)
