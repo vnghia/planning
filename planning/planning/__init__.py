@@ -23,7 +23,7 @@ class Env:
         self.type = type or "linear"
         self.save_qs = bool(save_qs)
         self.__env = vars(planning_ext)[
-            f"{type}_env_{self.n_env}_{int(save_qs)}_{lens[0]}_{lens[1]}"
+            f"{self.type}_env_{self.n_env}_{int(self.save_qs)}_{self.lens[0]}_{self.lens[1]}"
         ](self.cost, self.param / self.C, self.prob / self.C)
         self._policy = None
 
@@ -79,16 +79,24 @@ class Env:
         self._policy = data["policy"]
 
     def train(
-        self, gamma=None, eps=None, decay=None, epoch=None, lens=None, lr_pow=None
+        self,
+        gamma=None,
+        eps=None,
+        decay=None,
+        epoch=None,
+        ls=None,
+        lr_pow=None,
+        seed=None,
     ):
         gamma = gamma or 0.9
         eps = eps or 0.8
         decay = decay or 0.5
         epoch = epoch or 1
-        lens = lens or 100000000
+        ls = ls or 100000000
         lr_pow = lr_pow or 1
+        seed = seed or 42
 
-        self.__env.train(gamma, eps, decay, epoch, lens, lr_pow)
+        self.__env.train(gamma, eps, decay, epoch, ls, lr_pow, seed)
         self._policy = np.argmax(self.q, axis=-1)
 
     @property
@@ -245,9 +253,10 @@ class Env:
         epoch=None,
         ls=None,
         lr_pow=None,
+        seed=None,
     ):
         env = cls(lens, param, prob, C, type, save_qs)
-        env.train(gamma, eps, decay, epoch, ls, lr_pow)
+        env.train(gamma, eps, decay, epoch, ls, lr_pow, seed)
         return env
 
     @staticmethod
@@ -264,6 +273,7 @@ class Env:
         epoch=None,
         ls=None,
         lr_pow=None,
+        seed=None,
     ):
         return (
             lens,
@@ -278,6 +288,7 @@ class Env:
             epoch,
             ls,
             lr_pow,
+            seed,
         )
 
     @classmethod
