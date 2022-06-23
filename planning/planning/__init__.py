@@ -133,33 +133,36 @@ class Env:
     def show_cost(self, ax=None, info=""):
         ax = ax or plt.axes()
         x1 = np.linspace(0, self.ls[0], 100)
+        y1 = x1
         x2 = np.linspace(0, self.ls[1], 100)
-        ax.plot(x1, self.cs[0] * x1, label="cost 0")
+        y2 = x2
         if self.type == "convex":
-            y2 = self.cs[1] * x2**2
-        else:
-            y2 = self.cs[1] * x2
-        ax.plot(x2, y2, label="cost 1")
+            y2 = x2**2
+
+        for i in range(self.n_env):
+            ax.plot(x1, self.cost[i, 0] * y1, label=f"env {i} cost 0")
+            ax.plot(x2, self.cost[i, 1] * y2, label=f"env {i} cost 1")
+
         ax.legend()
         ax.set_title(f"cost{info}")
 
     def show_ratio(self, ax=None, info=""):
         ax = ax or plt.axes()
         x1 = np.linspace(0, self.ls[0], 100)
+        y1 = x1
         x2 = np.linspace(0, self.ls[1], 100)
-
-        r1 = self.param[0, 0] / self.param[0, 2]
-        ax.plot(x1, r1 * x1, label="ratio 0")
-
-        r2 = self.param[1, 0] / self.param[1, 2]
+        y2 = x2
         if self.type == "convex":
-            y2 = r2 * x2**2
-        else:
-            y2 = r2 * x2
-        ax.plot(x2, y2, label="ratio 1")
+            y2 = x2**2
+
+        for i in range(self.n_env):
+            r1 = self.cost[i, 0] / self.param[i, 0, 1]
+            r2 = self.cost[i, 1] / self.param[i, 1, 1]
+            ax.plot(x1, r1 * y1, label=f"env {i} ratio 0")
+            ax.plot(x2, r2 * y2, label=f"env {i} ratio 1")
 
         ax.legend()
-        ax.set_title(f"ratio {r1/r2}{info}")
+        ax.set_title(f"ratio{info}")
 
     def show_n_visit(self, info=""):
         a1 = self.n_visit[..., 0].ravel()
