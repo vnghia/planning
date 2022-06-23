@@ -3,6 +3,8 @@ from multiprocessing import Pool
 
 import matplotlib.pyplot as plt
 import numpy as np
+import plotly.graph_objects as go
+import plotly.subplots as sp
 from matplotlib import colors
 
 from .planning_ext import *
@@ -149,51 +151,57 @@ class Env:
         ax.set_title(f"ratio {r1/r2}{info}")
 
     def show_n_visit(self, info=""):
-        fig = plt.figure(figsize=plt.figaspect(0.5))
+        a1 = self.n_visit[..., 0].ravel()
+        a2 = self.n_visit[..., 1].ravel()
+
         _x = np.arange(self.ls[0] + 1)
         _y = np.arange(self.ls[1] + 1)
         _xx, _yy = np.meshgrid(_x, _y, indexing="ij")
         x, y = _xx.ravel(), _yy.ravel()
 
-        ax1 = fig.add_subplot(1, 2, 1, projection="3d")
-        dz1 = self.n_visit.transpose(2, 0, 1)[0].ravel()
-        ax1.bar3d(
-            x,
-            y,
-            np.zeros_like(dz1),
-            np.ones_like(x) * 0.75,
-            np.ones_like(x) * 0.75,
-            dz1,
-            shade=True,
-            color="blue",
+        fig = sp.make_subplots(
+            rows=1,
+            cols=2,
+            specs=[[{"type": "surface"}, {"type": "surface"}]],
+            subplot_titles=["Action 1", "Action 2"],
         )
-        ax1.set_xlabel("L1")
-        ax1.set_xticks(_x)
-        ax1.set_ylabel("L2")
-        ax1.set_yticks(_y)
-        ax1.set_title("action 0")
-        ax1.set_ylim(ax1.get_ylim()[::-1])
+        for i, j, z1, z2 in zip(x, y, a1, a2):
+            fig.add_trace(
+                go.Scatter3d(
+                    {
+                        "hoverinfo": "text",
+                        "hovertext": f"L1 = {i}<br />L2 = {j}<br />n_visit = {z1}",
+                        "line": {"color": "blue", "width": 10},
+                        "mode": "lines",
+                        "showlegend": False,
+                        "x": [i, i],
+                        "y": [j, j],
+                        "z": [z1, 0],
+                    }
+                ),
+                row=1,
+                col=1,
+            )
 
-        ax2 = fig.add_subplot(1, 2, 2, projection="3d")
-        dz2 = self.n_visit.transpose(2, 0, 1)[1].ravel()
-        ax2.bar3d(
-            x,
-            y,
-            np.zeros_like(dz2),
-            np.ones_like(x) * 0.75,
-            np.ones_like(x) * 0.75,
-            dz2,
-            shade=True,
-            color="orange",
-        )
-        ax2.set_xlabel("L1")
-        ax2.set_xticks(_x)
-        ax2.set_ylabel("L2")
-        ax2.set_yticks(_y)
-        ax2.set_title("action 1")
-        ax2.set_ylim(ax2.get_ylim()[::-1])
+            fig.add_trace(
+                go.Scatter3d(
+                    {
+                        "hoverinfo": "text",
+                        "hovertext": f"L1 = {i}<br />L2 = {j}<br />n_visit = {z2}",
+                        "line": {"color": "orange", "width": 10},
+                        "mode": "lines",
+                        "showlegend": False,
+                        "x": [i, i],
+                        "y": [j, j],
+                        "z": [z2, 0],
+                    }
+                ),
+                row=1,
+                col=2,
+            )
 
-        fig.suptitle(f"n_visit{info}")
+        fig.update_layout(title_text=info)
+        fig.show()
 
     @classmethod
     def init_and_train(
