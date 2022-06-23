@@ -26,7 +26,10 @@ class Env:
         self._policy = None
 
     def __repr__(self):
-        return f"{self.type}_env: " f"ls: {self.ls} param: {self.param}"
+        return (
+            f"{self.type}_env: "
+            f"ls: {self.ls} param: {self.param} prob: {self.prob if self.n_env > 1 else ''}"
+        )
 
     def __getstate__(self):
         state = io.BytesIO()
@@ -34,6 +37,7 @@ class Env:
             state,
             ls=self.ls,
             param=self.param,
+            prob=self.prob,
             type=self.type,
             save_qs=self.save_qs,
             q=self.q,
@@ -48,6 +52,7 @@ class Env:
         self.__init__(
             data["ls"],
             data["param"],
+            data["prob"],
             data["type"].item(),
             data["save_qs"].item(),
         )
@@ -205,9 +210,9 @@ class Env:
 
     @classmethod
     def init_and_train(
-        cls, ls, param, type, save_qs, gamma, eps, decay, epoch, learns, lr_pow
+        cls, ls, param, prob, type, save_qs, gamma, eps, decay, epoch, learns, lr_pow
     ):
-        env = cls(ls, param, type, save_qs)
+        env = cls(ls, param, prob, type, save_qs)
         env.train(gamma, eps, decay, epoch, learns, lr_pow)
         return env
 
@@ -215,6 +220,7 @@ class Env:
     def get_param(
         ls,
         param,
+        prob=None,
         type="linear",
         save_qs=False,
         gamma=0.9,
@@ -227,6 +233,7 @@ class Env:
         return (
             ls,
             param,
+            prob,
             type,
             save_qs,
             gamma,
