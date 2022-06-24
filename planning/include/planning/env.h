@@ -266,18 +266,31 @@ template <int_type n_env_t, typename F, bool save_qs_t, int_type... max_lens_t>
 class ConvexEnv : public Env<n_env_t, 2, F, save_qs_t, max_lens_t...> {
  public:
   using parent_type = Env<n_env_t, 2, F, save_qs_t, max_lens_t...>;
+  static constexpr auto is_convex = true;
 
  protected:
   using parent_type::env_cost_;
 
  public:
-  using parent_type::parent_type;
+  using env_cost_type = typename parent_type::env_cost_type;
+  using env_param_type = typename parent_type::env_param_type;
+  using env_prob_type = typename parent_type::env_prob_type;
 
   using float_type = typename parent_type::float_type;
   using array_iq_type = typename parent_type::array_iq_type;
 
+  ConvexEnv(const env_cost_type& env_cost, const env_param_type& env_param,
+            const env_prob_type& env_prob, float_type cost_eps)
+      : parent_type(env_cost, env_param, env_prob), cost_eps_(cost_eps) {}
+
   float_type reward(const array_iq_type& states, const array_iq_type& env_states) const override {
     return -(states(0) * env_cost_(env_states(0), 0) +
-             states(1) * states(1) * env_cost_(env_states(1), 1));
+             (states(1) * states(1) * cost_eps_ + states(1)) * env_cost_(env_states(1), 1));
   }
+
+ private:
+  const float_type cost_eps_;
 };
+
+template <typename T>
+concept env_is_convex = T::is_convex;

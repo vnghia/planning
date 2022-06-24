@@ -91,10 +91,19 @@ const auto gen_env(nb::module_ &m) {
                   env_param,
               nb::tensor<nb::numpy, env_float_type,
                          nb::shape<env_type::n_env, env_type::n_queue>>
-                  env_prob) {
-             new (env) env_type(static_cast<env_float_type *>(env_cost.data()),
-                                static_cast<env_float_type *>(env_param.data()),
-                                static_cast<env_float_type *>(env_prob.data()));
+                  env_prob,
+              env_float_type cost_eps) {
+             if constexpr (env_is_convex<env_type>) {
+               new (env) env_type(
+                   static_cast<env_float_type *>(env_cost.data()),
+                   static_cast<env_float_type *>(env_param.data()),
+                   static_cast<env_float_type *>(env_prob.data()), cost_eps);
+             } else {
+               new (env)
+                   env_type(static_cast<env_float_type *>(env_cost.data()),
+                            static_cast<env_float_type *>(env_param.data()),
+                            static_cast<env_float_type *>(env_prob.data()));
+             }
            })
       .def("train",
            [](env_type &e, env_float_type gamma, env_float_type eps,

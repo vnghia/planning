@@ -11,7 +11,17 @@ from .planning_ext import *
 
 
 class Env:
-    def __init__(self, lens, cost, param, prob=None, C=None, type=None, save_qs=None):
+    def __init__(
+        self,
+        lens,
+        cost,
+        param,
+        prob=None,
+        C=None,
+        type=None,
+        cost_eps=None,
+        save_qs=None,
+    ):
         self.lens = lens
         self.cost = np.array(cost).reshape((-1, 2))
         self.param = np.array(param).reshape((-1, 2, 2))
@@ -21,20 +31,23 @@ class Env:
         )
         self.C = C or 1
         self.type = type or "linear"
+        self.cost_eps = cost_eps if cost_eps is not None else 1
         self.save_qs = bool(save_qs)
         self.__env = vars(planning_ext)[
             f"{self.type}_env_{self.n_env}_{int(self.save_qs)}_{self.lens[0]}_{self.lens[1]}"
-        ](self.cost, self.param / self.C, self.prob / self.C)
+        ](self.cost, self.param / self.C, self.prob / self.C, self.cost_eps)
         self._policy = None
 
     def __repr__(self):
         return (
-            f"{self.type}_env: "
-            f"lens: {self.lens} "
-            f"cost: {self.cost} "
-            f"param: {self.param} "
-            f"prob: {self.prob} "
-            f"C: {self.C}"
+            f"{self.type}_env:"
+            f" lens: {self.lens}"
+            f" cost: {self.cost}"
+            f" param: {self.param}"
+            f" prob: {self.prob}"
+            f" C: {self.C}"(
+                "" if self.type != "convex" else f" cost_eps: {self.cost_eps}"
+            )
         )
 
     def __getstate__(self):
@@ -47,6 +60,7 @@ class Env:
             prob=self.prob,
             C=self.C,
             type=self.type,
+            cost_eps=self.cost_eps,
             save_qs=self.save_qs,
             q=self.q,
             n_visit=self.n_visit,
@@ -64,6 +78,7 @@ class Env:
             data["prob"],
             data["C"].item(),
             data["type"].item(),
+            data["cost_eps"].item(),
             data["save_qs"].item(),
         )
 
@@ -242,10 +257,12 @@ class Env:
     def init_and_train(
         cls,
         lens,
+        cost,
         param,
         prob=None,
         C=None,
         type=None,
+        cost_eps=None,
         save_qs=None,
         gamma=None,
         eps=None,
@@ -255,17 +272,19 @@ class Env:
         lr_pow=None,
         seed=None,
     ):
-        env = cls(lens, param, prob, C, type, save_qs)
+        env = cls(lens, cost, param, prob, C, type, cost_eps, save_qs)
         env.train(gamma, eps, decay, epoch, ls, lr_pow, seed)
         return env
 
     @staticmethod
     def get_param(
         lens,
+        cost,
         param,
         prob=None,
         C=None,
         type=None,
+        cost_eps=None,
         save_qs=None,
         gamma=None,
         eps=None,
@@ -277,10 +296,12 @@ class Env:
     ):
         return (
             lens,
+            cost,
             param,
             prob,
             C,
             type,
+            cost_eps,
             save_qs,
             gamma,
             eps,
