@@ -41,10 +41,10 @@ static constexpr auto gen_inf_indices(
 }
 
 template <typename... prefixes_type, int_type... i, typename... postfixes_type>
-static constexpr auto&& access(auto& q, const auto& a,
-                               prefixes_type... prefixes,
-                               std::integer_sequence<int_type, i...>,
-                               postfixes_type... postfixes) {
+static inline constexpr auto&& access(auto& q, const auto& a,
+                                      prefixes_type... prefixes,
+                                      std::integer_sequence<int_type, i...>,
+                                      postfixes_type... postfixes) {
   return q(prefixes..., a[i]..., postfixes...);
 }
 
@@ -117,14 +117,14 @@ class Env {
 
     for (int_type i = 0; i < n_queue; ++i) {
       if (not_full_[i]) {
-        const auto& temp = env_param_(env_states_[i], i, 0);
+        const auto temp = env_param_(env_states_[i], i, 0);
         prob_dummy -= temp;
         p[i] = temp;
       }
     }
 
     if (not_empty_[action]) {
-      const auto& temp = env_param_(env_states_[action], action, 1);
+      const auto temp = env_param_(env_states_[action], action, 1);
       prob_dummy -= temp;
       p[n_queue + action] = temp;
     }
@@ -133,7 +133,7 @@ class Env {
       auto env_state = env_states_[i];
       for (int_type j = 0; j < n_env; ++j) {
         if (env_state != j) {
-          const auto& temp = env_prob_(env_state, i);
+          const auto temp = env_prob_(env_state, i);
           prob_dummy -= temp;
           p[2 * n_queue + j * n_queue + i] = temp;
         }
