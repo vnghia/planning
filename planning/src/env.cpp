@@ -80,53 +80,135 @@ const auto gen_env(nb::module_ &m) {
                            std::to_string(env_type::dim_queue[1] - 1);
 
   using env_float_type = typename env_type::float_type;
-  nb::class_<env_type>(m, name.c_str())
-      .def("__init__",
-           [](env_type *env,
-              nb::tensor<nb::numpy, env_float_type,
-                         nb::shape<env_type::n_env, env_type::n_queue>>
-                  env_cost,
-              nb::tensor<nb::numpy, env_float_type,
-                         nb::shape<env_type::n_env, env_type::n_queue, 2>>
-                  env_param,
-              nb::tensor<nb::numpy, env_float_type,
-                         nb::shape<env_type::n_env, env_type::n_queue>>
-                  env_prob,
-              env_float_type cost_eps) {
-             if constexpr (env_is_convex<env_type>) {
-               new (env) env_type(
-                   static_cast<env_float_type *>(env_cost.data()),
-                   static_cast<env_float_type *>(env_param.data()),
-                   static_cast<env_float_type *>(env_prob.data()), cost_eps);
-             } else {
-               new (env)
-                   env_type(static_cast<env_float_type *>(env_cost.data()),
-                            static_cast<env_float_type *>(env_param.data()),
-                            static_cast<env_float_type *>(env_prob.data()));
-             }
+  auto cls =
+      nb::class_<env_type>(m, name.c_str())
+          .def("__init__",
+               [](env_type *env,
+                  nb::tensor<nb::numpy, env_float_type,
+                             nb::shape<env_type::n_env, env_type::n_queue>>
+                      env_cost,
+                  nb::tensor<nb::numpy, env_float_type,
+                             nb::shape<env_type::n_env, env_type::n_queue, 2>>
+                      env_param,
+                  nb::tensor<nb::numpy, env_float_type,
+                             nb::shape<env_type::n_env, env_type::n_queue>>
+                      env_prob,
+                  env_float_type cost_eps) {
+                 if constexpr (env_is_convex<env_type>) {
+                   new (env)
+                       env_type(static_cast<env_float_type *>(env_cost.data()),
+                                static_cast<env_float_type *>(env_param.data()),
+                                static_cast<env_float_type *>(env_prob.data()),
+                                cost_eps);
+                 } else {
+                   new (env)
+                       env_type(static_cast<env_float_type *>(env_cost.data()),
+                                static_cast<env_float_type *>(env_param.data()),
+                                static_cast<env_float_type *>(env_prob.data()));
+                 }
+               })
+          .def("train",
+               [](env_type &e, env_float_type gamma, env_float_type eps,
+                  env_float_type decay, int_type epoch, uint64_t ls,
+                  env_float_type lr_pow, pcg32::state_type seed) {
+                 e.train(gamma, eps, decay, epoch, ls, lr_pow, seed);
+               })
+          .def_property_readonly("q",
+                                 [](const env_type &e) {
+                                   return gen_q<env_type, env_float_type>(
+                                       e.q(), env_type::idx_nq);
+                                 })
+          .def_property_readonly("n_visit",
+                                 [](const env_type &e) {
+                                   return gen_q<env_type, int_type>(
+                                       e.n_visit(), env_type::idx_nq);
+                                 })
+          .def_property_readonly("qs",
+                                 [](const env_type &e) {
+                                   return gen_qs<env_type, env_float_type>(
+                                       e.qs(), env_type::idx_nq);
+                                 })
+          .def("from_array", gen_from_array<env_type>(env_type::idx_nq))
+          .def_property_readonly("exceed_size", [](const env_type &e) {
+            return env_type::exceed_size;
+          });
+  if constexpr (!env_type::exceed_size) {
+    cls.def_property_readonly(
+           "full_state_indices",
+           [](const env_type &e) {
+             static constexpr std::array<size_t, 2> dims{
+                 env_type::n_combination, env_type::n_full_dim};
+             static constexpr auto res = ([]() {
+               std::array<int_type,
+                          env_type::n_combination * env_type::n_full_dim>
+                   res;
+               for (int_type i = 0; i < env_type::n_combination; ++i) {
+                 std::copy_n(env_type::full_state_indicies[i].begin(),
+                             env_type::n_full_dim,
+                             res.begin() + i * env_type::n_full_dim);
+               }
+               return res;
+             })();
+             return nb::tensor<
+                 nb::numpy, int_type,
+                 nb::shape<env_type::n_combination, env_type::n_full_dim>>(
+                 const_cast<int_type *>(res.data()), 2, dims.data());
            })
-      .def("train",
-           [](env_type &e, env_float_type gamma, env_float_type eps,
-              env_float_type decay, int_type epoch, uint64_t ls,
-              env_float_type lr_pow, pcg32::state_type seed) {
-             e.train(gamma, eps, decay, epoch, ls, lr_pow, seed);
-           })
-      .def_property_readonly("q",
-                             [](const env_type &e) {
-                               return gen_q<env_type, env_float_type>(
-                                   e.q(), env_type::idx_nq);
-                             })
-      .def_property_readonly("n_visit",
-                             [](const env_type &e) {
-                               return gen_q<env_type, int_type>(
-                                   e.n_visit(), env_type::idx_nq);
-                             })
-      .def_property_readonly("qs",
-                             [](const env_type &e) {
-                               return gen_qs<env_type, env_float_type>(
-                                   e.qs(), env_type::idx_nq);
-                             })
-      .def("from_array", gen_from_array<env_type>(env_type::idx_nq));
+        .def("init_reward_vec",
+             [](env_type &e) {
+               [[maybe_unused]] static const auto init = ([&e]() {
+                 e.init_reward_vec();
+                 return true;
+               })();
+             })
+        .def_property_readonly(
+            "reward_vec",
+            [](const env_type &e) {
+              static constexpr std::array<size_t, 1> dims{
+                  env_type::n_combination};
+              return nb::tensor<nb::numpy, env_float_type,
+                                nb::shape<env_type::n_combination>>(
+                  const_cast<env_float_type *>(e.reward_vec().data()), 1,
+                  dims.data());
+            })
+        .def("init_prob_mat",
+             [](env_type &e) {
+               [[maybe_unused]] static const auto init = ([&e]() {
+                 e.init_prob_mat();
+                 return true;
+               })();
+             })
+        .def_property_readonly(
+            "prob_mat",
+            [](env_type &e) {
+              static constexpr std::array<size_t, 3> dims{
+                  env_type::n_combination, env_type::n_combination,
+                  env_type::n_queue};
+              return nb::tensor<
+                  nb::numpy, env_float_type,
+                  nb::shape<env_type::n_combination, env_type::n_combination,
+                            env_type::n_queue>>(
+                  const_cast<env_float_type *>(e.prob_mat().data()), 3,
+                  dims.data());
+            })
+        .def("train_v", [](env_type &e, uint64_t ls,
+                           env_float_type lr) { e.train_v(ls, lr); })
+        .def_property_readonly(
+            "v",
+            [](const env_type &e) {
+              static constexpr std::array<size_t, 1> dims{
+                  env_type::n_combination};
+              return nb::tensor<nb::numpy, env_float_type,
+                                nb::shape<env_type::n_combination>>(
+                  const_cast<env_float_type *>(e.v().data()), 1, dims.data());
+            })
+        .def_property_readonly("policy_v", [](const env_type &e) {
+          static constexpr std::array<size_t, 1> dims{env_type::n_combination};
+          return nb::tensor<nb::numpy, int_type,
+                            nb::shape<env_type::n_combination>>(
+              const_cast<int_type *>(e.policy_v().data()), 1, dims.data());
+        });
+  }
 }
 
 template <

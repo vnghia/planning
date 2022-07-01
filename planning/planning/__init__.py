@@ -114,6 +114,13 @@ class Env:
         self.__env.train(gamma, eps, decay, epoch, ls, lr_pow, seed)
         self._policy = np.argmax(self.q, axis=-1)
 
+    def train_v(self, ls=None, lr=None):
+        ls = ls or 100000
+        lr = lr or 0.05
+        self.__env.init_reward_vec()
+        self.__env.init_prob_mat()
+        self.__env.train_v(ls, lr)
+
     @property
     def q(self):
         return self.__env.q
@@ -127,12 +134,32 @@ class Env:
         return self.__env.qs if self.save_qs else None
 
     @property
-    def reward_mat(self):
-        return self.__env.reward_mat
+    def exceed_size(self):
+        return self.__env.exceed_size
+
+    @property
+    def full_state_indices(self):
+        return self.__env.full_state_indices
+
+    @property
+    def reward_vec(self):
+        return self.__env.reward_vec
+
+    @property
+    def prob_mat(self):
+        return self.__env.prob_mat
 
     @property
     def policy(self):
         return self._policy
+
+    @property
+    def v(self):
+        return self.__env.v
+
+    @property
+    def policy_v(self):
+        return self.__env.policy_v
 
     def show_policy(self, ax=None, info=""):
         ax = ax or plt.axes()
