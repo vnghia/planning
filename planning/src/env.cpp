@@ -166,7 +166,7 @@ void make_env_2_queue(nb::module_ &m) {
   static constexpr auto size = use_product ? (dims_t * ... * 1) : n_dim_t;
   static constexpr auto env_dims_queue = ([]() {
     if constexpr (use_product) {
-      return make_set_product<dims_t + 1 ...>().first;
+      return make_set_product<dims_t + 1 ...>();
     } else {
       return std::array<std::array<size_t, 2>, size>{
           std::array{dims_t, dims_t}...};
