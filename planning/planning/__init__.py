@@ -3,6 +3,7 @@ from multiprocessing import Pool
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import plotly.subplots as sp
 from matplotlib import colors
@@ -32,6 +33,7 @@ class Env:
             np.array(prob).reshape((2, -1)) if prob is not None else np.zeros((2, 1))
         )
 
+        self.n_queue = 2
         self.n_env = self.cost.shape[1]
 
         self.C = C or 1
@@ -54,6 +56,21 @@ class Env:
         )
 
         self._policy_q = None
+
+        self.summary = pd.DataFrame()
+        self.summary["name"] = (
+            [f"Cost {i + 1}" for i in range(self.n_queue)]
+            + [f"Arrival {i + 1}" for i in range(self.n_queue)]
+            + [f"Departure {i + 1}" for i in range(self.n_queue)]
+            + [f"Probability {i + 1}" for i in range(self.n_queue)]
+        )
+        for i in range(self.n_env):
+            self.summary[f"Env {i + 1}"] = (
+                self.cost[:, i].tolist()
+                + (self.arrival[:, i] / self.C).tolist()
+                + (self.departure[:, i] / self.C).tolist()
+                + (self.prob[:, i] / self.C).tolist()
+            )
 
     def __repr__(self):
         return (
