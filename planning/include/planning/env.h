@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cmath>
+#include <execution>
 #include <functional>
 #include <limits>
 #include <random>
@@ -12,6 +13,13 @@
 
 #include "Fastor/Fastor.h"
 #include "pcg_random.hpp"
+
+template <size_t begin, size_t end>
+static constexpr auto make_iota() {
+  std::array<size_t, end - begin> res;
+  std::iota(res.begin(), res.end(), begin);
+  return res;
+}
 
 template <size_t offset, size_t... i>
 static constexpr auto cumprod(const auto& a, std::index_sequence<i...>) {
@@ -95,6 +103,7 @@ class Env {
   static constexpr auto n_env = n_env_t;
 
   using float_type = float_t;
+  static constexpr auto inf_v = std::numeric_limits<float_type>::infinity();
 
   static constexpr auto save_qs = save_qs_t;
   static constexpr std::array dims_queue = {queue_lens_t + 1 ...};
@@ -105,8 +114,6 @@ class Env {
   using env_prob_type = env_cost_type;
 
   static constexpr auto idx_nq = std::make_index_sequence<n_queue>{};
-  static constexpr auto iota_nq =
-      ([]<size_t... i>(std::index_sequence<i...>) { return std::array{i...}; })(idx_nq);
 
   static constexpr auto full_state_information = ([]<size_t... i>(std::index_sequence<i...>) {
     return make_set_product<dims_queue[i]..., n_env*(i - i + 1)...>();
@@ -154,6 +161,11 @@ class Env {
   using n_visit_type = Fastor::Tensor<size_t, n_obs_state, n_queue>;
   using qs_type = std::conditional_t<save_qs, std::vector<float_type>, std::nullptr_t>;
 
+  using v_type =
+      std::conditional_t<n_env == 1, std::array<float_type, n_obs_state>, std::nullptr_t>;
+  using policy_v_type =
+      std::conditional_t<n_env == 1, std::array<size_t, n_obs_state>, std::nullptr_t>;
+
   static constexpr auto q_inf_idx = ([]<size_t... i>(std::index_sequence<i...>) {
     return std::make_tuple(make_inf_idx_i<obs_state_idx, i, dims_queue[i]>()...);
   })(idx_nq);
@@ -170,13 +182,13 @@ class Env {
         action_dist_(init_action_dist()),
         reward_config_(init_reward_config(reward_func)) {}
 
-  void reset() {
+  void reset_q() {
     q_.fill(0);
     ([this]<size_t... i>(std::index_sequence<i...>) {
       (([this]() {
          constexpr auto& idx = std::get<i>(q_inf_idx);
          for (const auto& j : idx) {
-           q_(j, i) = -std::numeric_limits<float_type>::infinity();
+           q_(j, i) = -inf_v;
          }
        })(),
        ...);
@@ -186,7 +198,7 @@ class Env {
     n_visit_.fill(0);
   }
 
-  void reset_epoch(pcg32::state_type seed) {
+  void reset_q_epoch(pcg32::state_type seed) {
     rng_.seed(seed);
     state_ = 0;
   }
@@ -198,14 +210,15 @@ class Env {
 
   void train_q(float_type gamma, float_type eps, float_type decay, size_t epoch, uint64_t ls,
                pcg32::state_type seed) {
-    reset();
+    static constexpr auto iota_n_queue = make_iota<0, n_queue>();
+    reset_q();
 
     if constexpr (save_qs) {
       qs_.resize(epoch * ls * q_.size());
     }
 
     for (size_t i = 0; i < epoch; ++i) {
-      reset_epoch(seed);
+      reset_q_epoch(seed);
 
       for (size_t j = 0; j < ls; ++j) {
         const auto state = state_;
@@ -215,7 +228,7 @@ class Env {
         if (greedy_dis_(rng_) < eps) {
           a = action_dist_[obs_state](rng_);
         } else {
-          a = *std::max_element(iota_nq.begin(), iota_nq.end(),
+          a = *std::max_element(iota_n_queue.begin(), iota_n_queue.end(),
                                 [this, &obs_state](size_t a1, size_t a2) {
                                   return q_(obs_state, a1) < q_(obs_state, a2);
                                 });
@@ -225,10 +238,11 @@ class Env {
         const auto next_state = state_;
         const auto next_obs_state = map_full_obs[next_state];
 
-        const auto next_a = *std::max_element(
-            iota_nq.begin(), iota_nq.end(), [this, &next_obs_state](size_t a1, size_t a2) {
-              return q_(next_obs_state, a1) < q_(next_obs_state, a2);
-            });
+        const auto next_a =
+            *std::max_element(iota_n_queue.begin(), iota_n_queue.end(),
+                              [this, &next_obs_state](size_t a1, size_t a2) {
+                                return q_(next_obs_state, a1) < q_(next_obs_state, a2);
+                              });
         const auto next_q = q_(next_obs_state, next_a);
         const auto reward = reward_config_[next_state];
 
@@ -243,6 +257,21 @@ class Env {
     }
   }
 
+  void train_v(float_type gamma, uint64_t ls) {
+    if constexpr (n_env == 1) {
+      static constexpr auto iota_n_obs_state = make_iota<0, n_obs_state>();
+
+      v_.fill(0);
+      for (uint64_t i = 0; i < ls; ++i) {
+        const auto v_i = v_;
+        std::for_each(std::execution::par_unseq, iota_n_obs_state.begin(), iota_n_obs_state.end(),
+                      [gamma, this, &v_i](size_t j) { update_v_i<false>(gamma, j, v_i); });
+      }
+      std::for_each(std::execution::par_unseq, iota_n_obs_state.begin(), iota_n_obs_state.end(),
+                    [gamma, this](size_t j) { update_v_i<true>(gamma, j, v_); });
+    }
+  }
+
   void from_array(const float_type* q, const size_t* n_visit, std::span<float_type> qs) {
     q_ = q;
     n_visit_ = n_visit;
@@ -254,6 +283,9 @@ class Env {
   const q_type& q() const { return q_; }
   const n_visit_type& n_visit() const { return n_visit_; }
   const qs_type& qs() const { return qs_; }
+
+  const v_type& v() const { return v_; }
+  const policy_v_type& policy_v() const { return policy_v_; }
 
  private:
   const env_cost_type env_cost_;
@@ -271,6 +303,9 @@ class Env {
   q_type q_;
   n_visit_type n_visit_;
   qs_type qs_;
+
+  v_type v_;
+  policy_v_type policy_v_;
 
   pcg32 rng_;
   std::uniform_real_distribution<float_type> greedy_dis_;
@@ -361,6 +396,33 @@ class Env {
 
     return config;
   }
+
+  template <bool update_policy>
+  void update_v_i(float_type gamma, size_t j, const v_type& v_i) {
+    float_type max_v = -inf_v;
+    size_t max_a = 0;
+
+    for (size_t a = 0; a < n_queue; ++a) {
+      auto val_v = reward_config_[j];
+      const auto& [state, prob] = transition_config_[j][a];
+
+      for (size_t k = 0; k < state.size(); ++k) {
+        val_v += gamma * prob[k] * v_i[k];
+      }
+
+      if (max_v < val_v) {
+        max_v = val_v;
+        if constexpr (update_policy) {
+          max_a = a;
+        }
+      }
+    }
+    if constexpr (update_policy) {
+      policy_v_[j] = max_a;
+    } else {
+      v_[j] = max_v;
+    }
+  }
 };
 
 template <size_t n_env_t, typename float_t, bool save_qs_t, size_t... queue_lens_t>
@@ -373,6 +435,8 @@ class LinearEnv : public Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...> {
   using env_departure_type = typename env_type::env_departure_type;
   using env_prob_type = typename env_type::env_prob_type;
   using full_state_type = typename env_type::full_state_type;
+
+  static constexpr char env_name[] = "linear";
 
   LinearEnv(const env_cost_type& env_cost, const env_arrival_type& env_arrival,
             const env_departure_type& env_departure, const env_prob_type& env_prob)
@@ -394,6 +458,8 @@ class ConvexEnv : public Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...> {
   using env_departure_type = typename env_type::env_departure_type;
   using env_prob_type = typename env_type::env_prob_type;
   using full_state_type = typename env_type::full_state_type;
+
+  static constexpr char env_name[] = "convex";
 
   using float_type = typename env_type::float_type;
 

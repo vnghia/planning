@@ -3,7 +3,6 @@
 #include <array>
 #include <span>
 #include <string>
-#include <utility>
 
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/vector.h"
@@ -13,34 +12,37 @@ namespace nb = nanobind;
 
 using namespace nb::literals;
 
-template <typename env_type, typename data_type, typename vec_type, size_t... i>
-constexpr auto gen_q(const vec_type &v, std::index_sequence<i...>) {
-  constexpr auto dim = std::array<size_t, env_type::n_queue + 1>{
-      env_type::dims_queue[i]..., env_type::n_queue};
+template <bool condition, typename env_type, typename data_type,
+          size_t... postfixes_t, size_t... i>
+static constexpr auto make_return_tensor(const auto &v,
+                                         std::index_sequence<i...>) {
+  if constexpr (condition) {
+    constexpr auto n_dim = env_type::n_queue + sizeof...(postfixes_t);
+    constexpr size_t dims[] = {env_type::dims_queue[i]..., postfixes_t...};
 
-  return nb::tensor<nb::numpy, data_type,
-                    nb::shape<env_type::dims_queue[i]..., env_type::n_queue>>(
-      v.data(), env_type::n_queue + 1, dim.data());
+    return nb::tensor<nb::numpy, data_type,
+                      nb::shape<env_type::dims_queue[i]..., postfixes_t...>>(
+        const_cast<data_type *>(v.data()), n_dim, dims);
+  }
 }
 
-template <typename env_type, typename data_type, typename vec_type, size_t... i>
-constexpr auto gen_qs(const vec_type &v, std::index_sequence<i...>) {
-  if constexpr (env_type::save_qs) {
-    const auto n_first = v.size() / (env_type::n_obs_state * env_type::n_queue);
-    const auto dim = std::array<size_t, env_type::n_queue + 2>{
-        n_first, env_type::dims_queue[i]..., env_type::n_queue};
+template <bool condition, typename env_type, typename data_type,
+          size_t... postfixes_t, size_t... i>
+static constexpr auto make_return_tensor(const auto &v, size_t n_first,
+                                         std::index_sequence<i...>) {
+  if constexpr (condition) {
+    constexpr auto n_dim = 1 + env_type::n_queue + sizeof...(postfixes_t);
+    const size_t dims[] = {n_first, env_type::dims_queue[i]..., postfixes_t...};
 
     return nb::tensor<
         nb::numpy, data_type,
-        nb::shape<nb::any, env_type::dims_queue[i]..., env_type::n_queue>>(
-        const_cast<data_type *>(v.data()), env_type::n_queue + 2, dim.data());
-  } else {
-    return nullptr;
+        nb::shape<nb::any, env_type::dims_queue[i]..., postfixes_t...>>(
+        const_cast<data_type *>(v.data()), n_dim, dims);
   }
 }
 
 template <typename env_type, size_t... i>
-constexpr auto gen_from_array(std::index_sequence<i...>) {
+static constexpr auto make_from_array(std::index_sequence<i...>) {
   using env_float_type = typename env_type::float_type;
   return
       [](env_type &e,
@@ -61,14 +63,19 @@ constexpr auto gen_from_array(std::index_sequence<i...>) {
       };
 }
 
-template <typename env_type, const char *prefix>
-const auto gen_env(nb::module_ &m) {
-  static const auto name = prefix + std::to_string(env_type::n_env) + "_" +
-                           std::to_string(env_type::save_qs) + "_" +
-                           std::to_string(env_type::dims_queue[0] - 1) + "_" +
-                           std::to_string(env_type::dims_queue[1] - 1);
+template <typename env_type>
+auto make_env_name() {
+  return std::string(env_type::env_name) + "_" +
+         std::to_string(env_type::n_env) + "_" +
+         std::to_string(env_type::save_qs) + "_" +
+         std::to_string(env_type::dims_queue[0] - 1) + "_" +
+         std::to_string(env_type::dims_queue[1] - 1);
+}
 
+template <typename env_type>
+void make_env(nb::module_ &m) {
   using env_float_type = typename env_type::float_type;
+  static const auto name = make_env_name<env_type>();
   auto cls =
       nb::class_<env_type>(m, name.c_str())
           .def(
@@ -110,63 +117,85 @@ const auto gen_env(nb::module_ &m) {
                })
           .def_property_readonly("q",
                                  [](const env_type &e) {
-                                   return gen_q<env_type, env_float_type>(
+                                   return make_return_tensor<true, env_type,
+                                                             env_float_type,
+                                                             env_type::n_queue>(
                                        e.q(), env_type::idx_nq);
                                  })
           .def_property_readonly("n_visit",
                                  [](const env_type &e) {
-                                   return gen_q<env_type, size_t>(
+                                   return make_return_tensor<true, env_type,
+                                                             size_t,
+                                                             env_type::n_queue>(
                                        e.n_visit(), env_type::idx_nq);
                                  })
           .def_property_readonly("qs",
                                  [](const env_type &e) {
-                                   return gen_qs<env_type, env_float_type>(
-                                       e.qs(), env_type::idx_nq);
+                                   if constexpr (env_type::save_qs) {
+                                     const auto n_first =
+                                         e.qs().size() /
+                                         (env_type::n_obs_state *
+                                          env_type::n_queue);
+                                     return make_return_tensor<
+                                         env_type::save_qs, env_type,
+                                         env_float_type, env_type::n_queue>(
+                                         e.qs(), n_first, env_type::idx_nq);
+                                   }
                                  })
-          .def("from_array", gen_from_array<env_type>(env_type::idx_nq));
+          .def("train_v", [](env_type &e, env_float_type gamma,
+                             uint64_t ls) { e.train_v(gamma, ls); })
+          .def_property_readonly("v",
+                                 [](const env_type &e) {
+                                   return make_return_tensor<
+                                       env_type::n_env == 1, env_type,
+                                       env_float_type>(e.v(), env_type::idx_nq);
+                                 })
+          .def_property_readonly("policy_v",
+                                 [](const env_type &e) {
+                                   return make_return_tensor<
+                                       env_type::n_env == 1, env_type, size_t>(
+                                       e.policy_v(), env_type::idx_nq);
+                                 })
+          .def("from_array", make_from_array<env_type>(env_type::idx_nq));
 }
 
-template <
-    template <size_t n_env_t, typename F, bool save_qs_t, size_t... max_ls>
-    class EnvT,
-    size_t n_env_t, typename f_t, const char *prefix, bool save_qs, size_t i,
-    size_t sj, size_t... j>
-const auto gen_env_1d(nb::module_ &m, std::integer_sequence<size_t, j...>) {
-  (gen_env<EnvT<n_env_t, f_t, save_qs, i, j + sj>, prefix>(m), ...);
-}
+template <typename f_t, bool product_t, size_t... dims_t>
+void make_env_2_queue(nb::module_ &m) {
+  static constexpr auto n_dim_t = sizeof...(dims_t);
+  static constexpr auto use_product = product_t && (n_dim_t == 2);
+  static constexpr auto size = use_product ? (dims_t * ... * 1) : n_dim_t;
+  static constexpr auto env_dims_queue = ([]() {
+    if constexpr (use_product) {
+      return make_set_product<dims_t + 1 ...>().first;
+    } else {
+      return std::array<std::array<size_t, 2>, size>{
+          std::array{dims_t, dims_t}...};
+    }
+  })();
 
-template <
-    template <size_t n_env_t, typename F, bool save_qs_t, size_t... max_ls>
-    class EnvT,
-    typename f_t, const char *prefix, size_t si, size_t sj, size_t... i,
-    size_t... j>
-const auto gen_env_2d(nb::module_ &m, std::integer_sequence<size_t, i...>,
-                      std::integer_sequence<size_t, j...> js) {
-  (gen_env_1d<EnvT, 1, f_t, prefix, true, i + si, sj>(m, js), ...);
-  (gen_env_1d<EnvT, 1, f_t, prefix, false, i + si, sj>(m, js), ...);
-  (gen_env_1d<EnvT, 2, f_t, prefix, true, i + si, sj>(m, js), ...);
-  (gen_env_1d<EnvT, 2, f_t, prefix, false, i + si, sj>(m, js), ...);
-}
+  ([&m]<size_t... i>(std::index_sequence<i...>) {
+    const auto make_env_i =
+        [&m]<size_t j, size_t... n_env_t>(std::index_sequence<n_env_t...>) {
+      const auto make_env_i_n_env =
+          [&m]<size_t k, size_t n_env, size_t... save_qs_t>(
+              std::index_sequence<save_qs_t...>) {
+        (make_env<LinearEnv<n_env, f_t, save_qs_t == 1, env_dims_queue[k][0],
+                            env_dims_queue[k][1]>>(m),
+         ...);
+        (make_env<ConvexEnv<n_env, f_t, save_qs_t == 1, env_dims_queue[k][0],
+                            env_dims_queue[k][1]>>(m),
+         ...);
+      };
 
-template <
-    template <size_t n_env_t, typename F, bool save_qs_t, size_t... max_ls>
-    class EnvT,
-    typename f_t, const char *prefix, size_t si, size_t... i>
-const auto gen_env_square(nb::module_ &m, std::integer_sequence<size_t, i...>) {
-  (gen_env<EnvT<1, f_t, true, i + si, i + si>, prefix>(m), ...);
-  (gen_env<EnvT<1, f_t, false, i + si, i + si>, prefix>(m), ...);
-  (gen_env<EnvT<2, f_t, true, i + si, i + si>, prefix>(m), ...);
-  (gen_env<EnvT<2, f_t, false, i + si, i + si>, prefix>(m), ...);
+      (make_env_i_n_env.template operator()<j, n_env_t + 1>(
+           std::make_index_sequence<2>{}),
+       ...);
+    };
+
+    (make_env_i.template operator()<i>(std::make_index_sequence<2>{}), ...);
+  })(std::make_index_sequence<size>{});
 }
 
 NB_MODULE(planning_ext, m) {
-  static constexpr auto is =
-      std::index_sequence<3, 7, 10, 15, 20, 25, 30, 40, 50>{};
-  using f_t = double;
-
-  static constexpr char linear_prefix[] = "linear_env_";
-  static constexpr char convex_prefix[] = "convex_env_";
-
-  gen_env_square<LinearEnv, f_t, linear_prefix, 0>(m, is);
-  gen_env_square<ConvexEnv, f_t, convex_prefix, 0>(m, is);
+  make_env_2_queue<double, false, 3, 7, 10, 15, 20, 25, 30, 40, 50>(m);
 }

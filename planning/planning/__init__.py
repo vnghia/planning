@@ -41,7 +41,6 @@ class Env:
 
         self.__env = vars(planning_ext)[
             f"{self.env_type}"
-            "_env"
             f"_{self.n_env}"
             f"_{int(self.save_qs)}"
             f"_{self.lens[0]}"
@@ -64,9 +63,10 @@ class Env:
             f" arrival: {self.arrival}"
             f" departure: {self.departure}"
             f" prob: {self.prob}"
-            f" C: {self.C}"(
-                "" if self.env_type != "convex" else f" cost_eps: {self.cost_eps}"
-            )
+            f" C: {self.C}"
+            ""
+            if self.env_type != "convex"
+            else f" cost_eps: {self.cost_eps}"
         )
 
     def __getstate__(self):
@@ -133,6 +133,12 @@ class Env:
         self.__env.train_q(gamma, eps, decay, epoch, ls, seed)
         self._policy_q = np.argmax(self.q, axis=-1)
 
+    def train_v(self, gamma=None, ls=None):
+        gamma = gamma or 0.9
+        ls = ls or 1000
+
+        self.__env.train_v(gamma, ls)
+
     @property
     def q(self):
         return self.__env.q
@@ -149,8 +155,16 @@ class Env:
     def policy_q(self):
         return self._policy_q
 
+    @property
+    def v(self):
+        return self.__env.v
+
+    @property
+    def policy_v(self):
+        return self.__env.policy_v
+
     def show_policy(self, algo="q", ax=None, info=""):
-        policy = self.policy_q
+        policy = self.policy_q if algo == "q" else self.policy_v
 
         ax = ax or plt.axes()
         fig = ax.get_figure()
