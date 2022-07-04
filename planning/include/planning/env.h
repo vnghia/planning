@@ -407,11 +407,14 @@ class Env {
     size_t max_a = 0;
 
     for (size_t a = 0; a < n_queue; ++a) {
-      auto val_v = reward_config_[j];
-      const auto& [state, prob] = transition_config_[j][a];
+      float_type val_v = reward_config_[j];
+      const auto& [states, probs] = transition_config_[j][a];
 
-      for (size_t k = 0; k < state.size(); ++k) {
-        val_v += gamma * prob[k] * v_i[k];
+      if (states.empty()) continue;
+
+      for (size_t k = 0; k < states.size(); ++k) {
+        auto s = states[k];
+        val_v += probs[k] * (gamma * v_i[s]);
       }
 
       if (max_v < val_v) {
@@ -421,6 +424,7 @@ class Env {
         }
       }
     }
+
     if constexpr (update_policy) {
       policy_v_[j] = max_a;
     } else {
