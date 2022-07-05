@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "Fastor/Fastor.h"
-#include "pcg_random.hpp"
+#include "planning/xoshiro.h"
 
 template <size_t begin, size_t end>
 static constexpr auto make_iota() {
@@ -194,8 +194,8 @@ class Env {
     n_visit_.fill(0);
   }
 
-  void reset_q_epoch(pcg32::state_type seed) {
-    rng_.seed(seed);
+  void reset_q_epoch(uint64_t seed) {
+    rng_ = decltype(rng_)(seed);
     state_ = 0;
   }
 
@@ -205,7 +205,7 @@ class Env {
   }
 
   void train_q(float_type gamma, float_type eps, float_type decay, size_t epoch,
-               uint64_t ls, pcg32::state_type seed) {
+               uint64_t ls, uint64_t seed) {
     static constexpr auto iota_n_queue = make_iota<0, n_queue>();
     reset_q();
 
@@ -303,7 +303,7 @@ class Env {
   v_type v_;
   policy_v_type policy_v_;
 
-  pcg32 rng_;
+  XoshiroCpp::Xoshiro256Plus rng_;
   std::uniform_real_distribution<float_type> greedy_dis_;
 
   auto init_transition_config() {
