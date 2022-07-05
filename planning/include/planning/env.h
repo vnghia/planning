@@ -146,8 +146,8 @@ class Env {
   using reward_func_type =
       std::function<float_type(const env_cost_type&, const full_state_type&)>;
 
-  using q_type = Fastor::Tensor<float_type, n_obs_state, n_queue>;
-  using n_visit_type = Fastor::Tensor<size_t, n_obs_state, n_queue>;
+  using q_type = std::array<float_type, n_obs_state * n_queue>;
+  using n_visit_type = std::array<size_t, n_obs_state * n_queue>;
   using qs_type =
       std::conditional_t<save_qs, std::vector<float_type>, std::nullptr_t>;
 
@@ -158,11 +158,19 @@ class Env {
       std::conditional_t<n_env == 1, std::array<size_t, n_obs_state>,
                          std::nullptr_t>;
 
-  static constexpr auto q_inf_idx =
-      ([]<size_t... i>(std::index_sequence<i...>) {
-        return std::make_tuple(
-            make_inf_idx_i<obs_state_idx, i, dims_queue[i]>()...);
-      })(idx_nq);
+  static constexpr auto q_inf_idx = ([]() {
+    std::array<size_t, ((obs_state_idx.size() / (queue_lens_t + 1)) + ...)>
+        inf_idx{};
+    size_t cur{};
+    for (size_t i = 0; i < dim_obs_state; ++i) {
+      for (size_t j = 0; j < n_obs_state; ++j) {
+        if (!obs_state_idx[j][i]) {
+          inf_idx[cur++] = j * n_queue + i;
+        }
+      }
+    }
+    return inf_idx;
+  })();
 
   Env(const env_cost_type& env_cost, const env_arrival_type& env_arrival,
       const env_departure_type& env_departure, const env_prob_type& env_prob,
@@ -178,16 +186,10 @@ class Env {
 
   void reset_q() {
     q_.fill(0);
-    ([this]<size_t... i>(std::index_sequence<i...>) {
-      (([this]() {
-         constexpr auto& idx = std::get<i>(q_inf_idx);
-         for (const auto& j : idx) {
-           q_(j, i) = -inf_v;
-         }
-       })(),
-       ...);
-    })(idx_nq);
-    q_(0, 0) = 0;
+    for (size_t i = 0; i < q_inf_idx.size(); ++i) {
+      q_[q_inf_idx[i]] = -inf_v;
+    }
+    q_[0] = 0;
 
     n_visit_.fill(0);
   }
@@ -222,28 +224,21 @@ class Env {
         if (greedy_dis_(rng_) < eps) {
           a = action_dist_[obs_state](rng_);
         } else {
-          a = *std::max_element(iota_n_queue.begin(), iota_n_queue.end(),
-                                [this, &obs_state](size_t a1, size_t a2) {
-                                  return q_(obs_state, a1) < q_(obs_state, a2);
-                                });
+          const auto it = q_.begin() + obs_state * n_queue;
+          a = std::max_element(it, it + n_queue) - it;
         }
 
         step(a);
         const auto next_state = state_;
         const auto next_obs_state = map_full_obs[next_state];
 
-        const auto next_a = *std::max_element(
-            iota_n_queue.begin(), iota_n_queue.end(),
-            [this, &next_obs_state](size_t a1, size_t a2) {
-              return q_(next_obs_state, a1) < q_(next_obs_state, a2);
-            });
-        const auto next_q = q_(next_obs_state, next_a);
-        const auto reward = reward_config_[next_state];
+        const auto next_it = q_.begin() + next_obs_state * n_queue;
+        const auto next_q = *std::max_element(next_it, next_it + n_queue);
+        const auto reward = reward_config_[state];
 
-        n_visit_(obs_state, a)++;
-        q_(obs_state, a) +=
-            (static_cast<float_type>(1) / n_visit_(obs_state, a)) *
-            (reward + gamma * next_q - q_(obs_state, a));
+        const auto q_idx = obs_state * n_queue + a;
+        q_[q_idx] += (static_cast<float_type>(1) / ++n_visit_[q_idx]) *
+                     (reward + gamma * next_q - q_[q_idx]);
 
         if constexpr (save_qs) {
           std::copy(q_.data(), q_.data() + q_.size(),
@@ -274,8 +269,8 @@ class Env {
 
   void from_array(const float_type* q, const size_t* n_visit,
                   std::span<float_type> qs) {
-    q_ = q;
-    n_visit_ = n_visit;
+    std::copy_n(q, q_.size(), q_.begin());
+    std::copy_n(n_visit, n_visit_.size(), n_visit_.begin());
     if constexpr (save_qs) {
       qs_.insert(qs_.begin(), qs.begin(), qs.end());
     }
