@@ -112,7 +112,7 @@ void make_env(nb::module_ &m) {
           .def("train_q",
                [](env_type &e, env_float_type gamma, env_float_type eps,
                   env_float_type decay, size_t epoch, uint64_t ls,
-                  pcg32::state_type seed) {
+                  uint64_t seed) {
                  e.train_q(gamma, eps, decay, epoch, ls, seed);
                })
           .def_property_readonly("q",
