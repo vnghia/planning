@@ -54,12 +54,4 @@ endif()
 
 find_path(DBG_MACRO_INCLUDE_DIRS "dbg.h")
 
-set(BUILD_TESTING OFF CACHE INTERNAL "" FORCE)
-add_subdirectory(Fastor)
-target_compile_options(Fastor INTERFACE -DFASTOR_ZERO_INITIALISE)
-target_compile_options(Fastor INTERFACE -DFASTOR_ENABLE_RUNTIME_CHECKS=0)
-target_compile_options(Fastor INTERFACE -DFASTOR_NO_ALIAS)
-target_compile_options(Fastor INTERFACE -DFASTOR_USE_VECTORISED_EXPR_ASSIGN)
-target_compile_options(Fastor INTERFACE -DCONTRACT_OPT=2)
-
 add_subdirectory(planning)
