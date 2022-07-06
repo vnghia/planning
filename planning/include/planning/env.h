@@ -117,7 +117,7 @@ class Env {
   static constexpr auto map_full_obs = ([]() {
     std::array<index_type, n_full_state> res;
     for (index_type i = 0; i < n_full_state; ++i) {
-      res[i] = i % n_full_state;
+      res[i] = i % n_obs_state;
     }
     return res;
   })();
