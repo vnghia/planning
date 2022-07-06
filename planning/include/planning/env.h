@@ -136,7 +136,7 @@ class Env {
       std::function<float_type(const env_cost_type&, const full_state_type&)>;
 
   using q_type = Eigen::Matrix<float_type, n_obs_state, n_queue>;
-  using n_visit_type = Eigen::Matrix<index_type, n_obs_state, n_queue>;
+  using n_visit_type = Eigen::Matrix<uint64_t, n_obs_state, n_queue>;
   using qs_type =
       std::conditional_t<save_qs, std::vector<float_type>, std::nullptr_t>;
 

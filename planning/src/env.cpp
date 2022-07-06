@@ -74,7 +74,7 @@ void make_env(nb::module_ &m) {
           .def_property_readonly(
               "n_visit",
               [](const env_type &e) {
-                return make_return_tensor<true, index_type>(e.n_visit());
+                return make_return_tensor<true, uint64_t>(e.n_visit());
               })
           .def_property_readonly(
               "qs",
