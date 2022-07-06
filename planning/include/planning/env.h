@@ -16,25 +16,27 @@
 #include "Fastor/Fastor.h"
 #include "planning/xoshiro.h"
 
-template <size_t begin, size_t end>
+using index_type = size_t;
+
+template <index_type begin, index_type end>
 static constexpr auto make_iota() {
-  std::array<size_t, end - begin> res;
+  std::array<index_type, end - begin> res;
   std::iota(res.begin(), res.end(), begin);
   return res;
 }
 
-template <size_t... set_lens_t>
+template <index_type... set_lens_t>
 static constexpr auto make_set_product() {
   constexpr auto n_combination = (set_lens_t * ... * 1);
   constexpr auto n_set = sizeof...(set_lens_t);
   constexpr auto set_lens = std::array{set_lens_t...};
 
-  std::array<std::array<size_t, n_set>, n_combination> product;
+  std::array<std::array<index_type, n_set>, n_combination> product;
 
-  for (size_t i = 0; i < n_combination; ++i) {
+  for (index_type i = 0; i < n_combination; ++i) {
     auto current = i;
 
-    for (size_t j = 0; j < n_set; ++j) {
+    for (index_type j = 0; j < n_set; ++j) {
       product[i][n_set - 1 - j] = current % set_lens[n_set - 1 - j];
       current /= set_lens[n_set - 1 - j];
     }
@@ -43,12 +45,12 @@ static constexpr auto make_set_product() {
   return product;
 }
 
-template <const auto idx, size_t i, size_t dim_i>
+template <const auto idx, index_type i, index_type dim_i>
 static constexpr auto make_inf_idx_i() {
-  std::array<size_t, idx.size() / dim_i> res;
-  size_t cur{};
+  std::array<index_type, idx.size() / dim_i> res;
+  index_type cur{};
 
-  for (size_t j = 0; j < idx.size(); ++j) {
+  for (index_type j = 0; j < idx.size(); ++j) {
     if (idx[j][i] == 0) {
       res[cur++] = j;
     }
@@ -58,15 +60,15 @@ static constexpr auto make_inf_idx_i() {
 }
 
 using transition_status_type =
-    std::optional<std::pair<size_t, std::variant<size_t, bool>>>;
+    std::optional<std::pair<index_type, std::variant<index_type, bool>>>;
 
-template <size_t dim_full_state, size_t n_queue>
+template <index_type dim_full_state, index_type n_queue>
 static constexpr transition_status_type can_transition_to(const auto& s1,
                                                           const auto& s2,
-                                                          size_t action) {
+                                                          index_type action) {
   transition_status_type res{};
 
-  for (size_t i = 0; i < dim_full_state; ++i) {
+  for (index_type i = 0; i < dim_full_state; ++i) {
     const auto diff = s2[i] - s1[i];
     if (diff) {
       if (res) {
@@ -84,8 +86,8 @@ static constexpr transition_status_type can_transition_to(const auto& s1,
   return res;
 }
 
-template <size_t n_queue_t, size_t n_env_t, typename float_t, bool save_qs_t,
-          size_t... queue_lens_t>
+template <index_type n_queue_t, index_type n_env_t, typename float_t,
+          bool save_qs_t, index_type... queue_lens_t>
 class Env {
  public:
   static constexpr auto n_queue = n_queue_t;
@@ -102,10 +104,11 @@ class Env {
   using env_departure_type = env_cost_type;
   using env_prob_type = env_cost_type;
 
-  static constexpr auto idx_nq = std::make_index_sequence<n_queue>{};
+  static constexpr auto idx_nq =
+      std::make_integer_sequence<index_type, n_queue>{};
 
   static constexpr auto full_state_idx =
-      ([]<size_t... i>(std::index_sequence<i...>) {
+      ([]<index_type... i>(std::integer_sequence<index_type, i...>) {
         return make_set_product<dims_queue[i]..., n_env*(i - i + 1)...>();
       })(idx_nq);
 
@@ -115,7 +118,7 @@ class Env {
       std::tuple_size<full_state_type>::value;
 
   static constexpr auto obs_state_idx =
-      ([]<size_t... i>(std::index_sequence<i...>) {
+      ([]<index_type... i>(std::integer_sequence<index_type, i...>) {
         return make_set_product<dims_queue[i]...>();
       })(idx_nq);
 
@@ -129,29 +132,29 @@ class Env {
       ((n_env * (queue_lens_t - queue_lens_t + 1)) * ... * 1);
 
   static constexpr auto map_full_obs = ([]() {
-    std::array<size_t, n_full_state> res;
-    for (size_t i = 0; i < n_full_state; ++i) {
+    std::array<index_type, n_full_state> res;
+    for (index_type i = 0; i < n_full_state; ++i) {
       res[i] = i / ratio_full_obs;
     }
     return res;
   })();
 
   using transition_config_type = std::array<
-      std::array<std::pair<std::vector<size_t>, std::vector<float_type>>,
+      std::array<std::pair<std::vector<index_type>, std::vector<float_type>>,
                  n_queue>,
       n_full_state>;
   using transition_dist_type =
-      std::array<std::array<std::discrete_distribution<size_t>, n_queue>,
+      std::array<std::array<std::discrete_distribution<index_type>, n_queue>,
                  n_full_state>;
   using action_dist_type =
-      std::array<std::discrete_distribution<size_t>, n_obs_state>;
+      std::array<std::discrete_distribution<index_type>, n_obs_state>;
   using reward_config_type = std::array<float_type, n_full_state>;
 
   using reward_func_type =
       std::function<float_type(const env_cost_type&, const full_state_type&)>;
 
   using q_type = std::array<float_type, n_obs_state * n_queue>;
-  using n_visit_type = std::array<size_t, n_obs_state * n_queue>;
+  using n_visit_type = std::array<index_type, n_obs_state * n_queue>;
   using qs_type =
       std::conditional_t<save_qs, std::vector<float_type>, std::nullptr_t>;
 
@@ -159,15 +162,15 @@ class Env {
       std::conditional_t<n_env == 1, std::array<float_type, n_obs_state>,
                          std::nullptr_t>;
   using policy_v_type =
-      std::conditional_t<n_env == 1, std::array<size_t, n_obs_state>,
+      std::conditional_t<n_env == 1, std::array<index_type, n_obs_state>,
                          std::nullptr_t>;
 
   static constexpr auto q_inf_idx = ([]() {
-    std::array<size_t, ((obs_state_idx.size() / (queue_lens_t + 1)) + ...)>
+    std::array<index_type, ((obs_state_idx.size() / (queue_lens_t + 1)) + ...)>
         inf_idx{};
-    size_t cur{};
-    for (size_t i = 0; i < dim_obs_state; ++i) {
-      for (size_t j = 0; j < n_obs_state; ++j) {
+    index_type cur{};
+    for (index_type i = 0; i < dim_obs_state; ++i) {
+      for (index_type j = 0; j < n_obs_state; ++j) {
         if (!obs_state_idx[j][i]) {
           inf_idx[cur++] = j * n_queue + i;
         }
@@ -190,7 +193,7 @@ class Env {
 
   void reset_q() {
     q_.fill(0);
-    for (size_t i = 0; i < q_inf_idx.size(); ++i) {
+    for (index_type i = 0; i < q_inf_idx.size(); ++i) {
       q_[q_inf_idx[i]] = -inf_v;
     }
     q_[0] = 0;
@@ -203,13 +206,13 @@ class Env {
     state_ = 0;
   }
 
-  void step(size_t action) {
+  void step(index_type action) {
     auto next_state_idx = transition_dist_[state_][action](rng_);
     state_ = transition_config_[state_][action].first[next_state_idx];
   }
 
-  void train_q(float_type gamma, float_type eps, float_type decay, size_t epoch,
-               uint64_t ls, uint64_t seed) {
+  void train_q(float_type gamma, float_type eps, float_type decay,
+               index_type epoch, uint64_t ls, uint64_t seed) {
     static constexpr auto iota_n_queue = make_iota<0, n_queue>();
     reset_q();
 
@@ -217,14 +220,14 @@ class Env {
       qs_.resize(epoch * ls * q_.size());
     }
 
-    for (size_t i = 0; i < epoch; ++i) {
+    for (index_type i = 0; i < epoch; ++i) {
       reset_q_epoch(seed);
 
-      for (size_t j = 0; j < ls; ++j) {
+      for (index_type j = 0; j < ls; ++j) {
         const auto state = state_;
         const auto obs_state = map_full_obs[state];
 
-        size_t a;
+        index_type a;
         if (greedy_dis_(rng_) < eps) {
           a = action_dist_[obs_state](rng_);
         } else {
@@ -260,18 +263,19 @@ class Env {
       for (uint64_t i = 0; i < ls; ++i) {
         const auto v_i = v_;
         std::for_each(std::execution::par_unseq, iota_n_obs_state.begin(),
-                      iota_n_obs_state.end(), [gamma, this, &v_i](size_t j) {
+                      iota_n_obs_state.end(),
+                      [gamma, this, &v_i](index_type j) {
                         update_v_i<false>(gamma, j, v_i);
                       });
       }
       std::for_each(std::execution::par_unseq, iota_n_obs_state.begin(),
-                    iota_n_obs_state.end(), [gamma, this](size_t j) {
+                    iota_n_obs_state.end(), [gamma, this](index_type j) {
                       update_v_i<true>(gamma, j, v_);
                     });
     }
   }
 
-  void from_array(const float_type* q, const size_t* n_visit,
+  void from_array(const float_type* q, const index_type* n_visit,
                   std::span<float_type> qs) {
     std::copy_n(q, q_.size(), q_.begin());
     std::copy_n(n_visit, n_visit_.size(), n_visit_.begin());
@@ -298,7 +302,7 @@ class Env {
   action_dist_type action_dist_;
   const reward_config_type reward_config_;
 
-  size_t state_;
+  index_type state_;
 
   q_type q_;
   n_visit_type n_visit_;
@@ -313,17 +317,17 @@ class Env {
   auto init_transition_config() {
     transition_config_type config;
 
-    for (size_t i = 0; i < n_full_state; ++i) {
+    for (index_type i = 0; i < n_full_state; ++i) {
       const auto& s_i = full_state_idx[i];
 
-      for (size_t a = 0; a < n_queue; ++a) {
+      for (index_type a = 0; a < n_queue; ++a) {
         if ((i >= ratio_full_obs && !s_i[a]) || (i < ratio_full_obs && a != 0))
           continue;
 
         float_type dummy_prob = 1;
         auto& config_i = config[i][a].second;
 
-        for (size_t j = 0; j < n_full_state; ++j) {
+        for (index_type j = 0; j < n_full_state; ++j) {
           if (i == j) continue;
 
           const auto next_to = can_transition_to<dim_full_state, n_queue>(
@@ -336,7 +340,7 @@ class Env {
 
             if (idx_q >= n_queue) {
               config_i.push_back(
-                  env_prob_(idx_q - n_queue, std::get<size_t>(change)));
+                  env_prob_(idx_q - n_queue, std::get<index_type>(change)));
             } else {
               if (std::get<bool>(change)) {
                 config_i.push_back(env_arrival_(idx_q, s_i[idx_q + n_queue]));
@@ -359,12 +363,12 @@ class Env {
   auto init_transition_dist() {
     transition_dist_type dist;
 
-    for (size_t i = 0; i < n_full_state; ++i) {
-      for (size_t a = 0; a < n_queue; ++a) {
+    for (index_type i = 0; i < n_full_state; ++i) {
+      for (index_type a = 0; a < n_queue; ++a) {
         const auto& config = transition_config_[i][a].second;
         if (config.size()) {
-          dist[i][a] =
-              std::discrete_distribution<size_t>(config.begin(), config.end());
+          dist[i][a] = std::discrete_distribution<index_type>(config.begin(),
+                                                              config.end());
         }
       }
     }
@@ -374,18 +378,18 @@ class Env {
 
   auto init_action_dist() {
     action_dist_type dist;
-    for (size_t i = 0; i < n_obs_state; ++i) {
+    for (index_type i = 0; i < n_obs_state; ++i) {
       auto full_state = i * ratio_full_obs;
-      std::array<size_t, n_queue> possible_action{};
+      std::array<index_type, n_queue> possible_action{};
 
-      for (size_t j = 0; j < n_queue; ++j) {
+      for (index_type j = 0; j < n_queue; ++j) {
         if (transition_config_[full_state][j].first.size()) {
           possible_action[j] = 1;
         }
       }
 
-      dist[i] = std::discrete_distribution<size_t>(possible_action.begin(),
-                                                   possible_action.end());
+      dist[i] = std::discrete_distribution<index_type>(possible_action.begin(),
+                                                       possible_action.end());
     }
 
     return dist;
@@ -394,7 +398,7 @@ class Env {
   auto init_reward_config(const reward_func_type& reward_func) {
     reward_config_type config;
 
-    for (size_t i = 0; i < n_full_state; ++i) {
+    for (index_type i = 0; i < n_full_state; ++i) {
       config[i] = reward_func(env_cost_, full_state_idx[i]);
     }
 
@@ -402,17 +406,17 @@ class Env {
   }
 
   template <bool update_policy>
-  void update_v_i(float_type gamma, size_t j, const v_type& v_i) {
+  void update_v_i(float_type gamma, index_type j, const v_type& v_i) {
     float_type max_v = -inf_v;
-    size_t max_a = 0;
+    index_type max_a = 0;
 
-    for (size_t a = 0; a < n_queue; ++a) {
+    for (index_type a = 0; a < n_queue; ++a) {
       float_type val_v = reward_config_[j];
       const auto& [states, probs] = transition_config_[j][a];
 
       if (states.empty()) continue;
 
-      for (size_t k = 0; k < states.size(); ++k) {
+      for (index_type k = 0; k < states.size(); ++k) {
         auto s = states[k];
         val_v += probs[k] * (gamma * v_i[s]);
       }
@@ -433,8 +437,8 @@ class Env {
   }
 };
 
-template <size_t n_env_t, typename float_t, bool save_qs_t,
-          size_t... queue_lens_t>
+template <index_type n_env_t, typename float_t, bool save_qs_t,
+          index_type... queue_lens_t>
 class LinearEnv : public Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...> {
  public:
   using env_type = Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...>;
@@ -459,8 +463,8 @@ class LinearEnv : public Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...> {
             }) {}
 };
 
-template <size_t n_env_t, typename float_t, bool save_qs_t,
-          size_t... queue_lens_t>
+template <index_type n_env_t, typename float_t, bool save_qs_t,
+          index_type... queue_lens_t>
 class ConvexEnv : public Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...> {
  public:
   using env_type = Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...>;
