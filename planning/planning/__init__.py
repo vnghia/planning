@@ -35,6 +35,7 @@ class Env:
 
         self.n_queue = 2
         self.n_env = self.cost.shape[1]
+        self.dims_queue = tuple(np.array(self.lens) + 1)
 
         self.C = C or 1
         self.env_type = env_type or "linear"
@@ -48,10 +49,10 @@ class Env:
             f"_{self.lens[0]}"
             f"_{self.lens[1]}"
         ](
-            self.cost,
-            self.arrival / self.C,
-            self.departure / self.C,
-            self.prob / self.C,
+            self.cost.ravel("F"),
+            self.arrival.ravel("F") / self.C,
+            self.departure.ravel("F") / self.C,
+            self.prob.ravel("F") / self.C,
             self.cost_eps,
         )
 
@@ -120,15 +121,9 @@ class Env:
             data["save_qs"].item(),
         )
 
-        q = data["q"]
-        n_visit = data["n_visit"]
-        qs = (
-            np.zeros(shape=(0,) + q.shape, dtype=q.dtype)
-            if not self.save_qs
-            else data["qs"]
-        )
-
-        self.__env.from_array(q, n_visit, qs, qs.size)
+        self._q = data["q"]
+        self._n_visit = data["n_visit"]
+        self._qs = data["qs"] if self.save_qs else None
         self._policy_q = data["policy_q"]
 
     def train_q(
@@ -148,6 +143,16 @@ class Env:
         seed = seed or 42
 
         self.__env.train_q(gamma, eps, decay, epoch, ls, seed)
+
+        shape = self.dims_queue + (self.n_queue,)
+        self._q = np.reshape(np.ravel(self.__env.q, order="C"), shape, order="F")
+        self._n_visit = np.reshape(
+            np.ravel(self.__env.n_visit, order="C"), shape, order="F"
+        )
+        if self.save_qs:
+            self._qs = np.reshape(
+                np.ravel(self.__env.qs, order="C"), (-1,) + shape, order="F"
+            )
         self._policy_q = np.argmax(self.q, axis=-1)
 
     def train_v(self, gamma=None, ls=None):
@@ -156,17 +161,24 @@ class Env:
 
         self.__env.train_v(gamma, ls)
 
+        self._v = np.reshape(
+            np.ravel(self.__env.v, order="C"), self.dims_queue, order="F"
+        )
+        self._policy_v = np.reshape(
+            np.ravel(self.__env.policy_v, order="C"), self.dims_queue, order="F"
+        )
+
     @property
     def q(self):
-        return self.__env.q
+        return self._q
 
     @property
     def n_visit(self):
-        return self.__env.n_visit
+        return self._n_visit
 
     @property
     def qs(self):
-        return self.__env.qs if self.save_qs else None
+        return self._qs if self.save_qs else None
 
     @property
     def policy_q(self):
@@ -174,11 +186,11 @@ class Env:
 
     @property
     def v(self):
-        return self.__env.v
+        return self._v
 
     @property
     def policy_v(self):
-        return self.__env.policy_v
+        return self._policy_v
 
     def show_policy(self, algo="q", ax=None, info=""):
         policy = self.policy_q if algo == "q" else self.policy_v

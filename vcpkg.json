@@ -1,5 +1,5 @@
 {
   "name": "planning",
   "version-string": "0.0.1",
-  "dependencies": ["dbg-macro"]
+  "dependencies": ["dbg-macro", "eigen3"]
 }

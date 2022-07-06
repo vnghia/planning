@@ -7,16 +7,16 @@
 #include <limits>
 #include <optional>
 #include <random>
-#include <span>
 #include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
 
-#include "Fastor/Fastor.h"
+#include "Eigen/Dense"
+#include "Eigen/SparseCore"
 #include "planning/xoshiro.h"
 
-using index_type = size_t;
+using index_type = int;
 
 template <index_type begin, index_type end>
 static constexpr auto make_iota() {
@@ -37,26 +37,12 @@ static constexpr auto make_set_product() {
     auto current = i;
 
     for (index_type j = 0; j < n_set; ++j) {
-      product[i][n_set - 1 - j] = current % set_lens[n_set - 1 - j];
-      current /= set_lens[n_set - 1 - j];
+      product[i][j] = current % set_lens[j];
+      current /= set_lens[j];
     }
   }
 
   return product;
-}
-
-template <const auto idx, index_type i, index_type dim_i>
-static constexpr auto make_inf_idx_i() {
-  std::array<index_type, idx.size() / dim_i> res;
-  index_type cur{};
-
-  for (index_type j = 0; j < idx.size(); ++j) {
-    if (idx[j][i] == 0) {
-      res[cur++] = j;
-    }
-  }
-
-  return res;
 }
 
 using transition_status_type =
@@ -99,7 +85,7 @@ class Env {
   static constexpr auto save_qs = save_qs_t;
   static constexpr std::array dims_queue = {queue_lens_t + 1 ...};
 
-  using env_cost_type = Fastor::Tensor<float_type, n_queue, n_env>;
+  using env_cost_type = Eigen::Matrix<float_type, n_queue, n_env>;
   using env_arrival_type = env_cost_type;
   using env_departure_type = env_cost_type;
   using env_prob_type = env_cost_type;
@@ -128,21 +114,17 @@ class Env {
 
   static constexpr auto offset_full_obs = dim_full_state - dim_obs_state;
 
-  static constexpr auto ratio_full_obs =
-      ((n_env * (queue_lens_t - queue_lens_t + 1)) * ... * 1);
-
   static constexpr auto map_full_obs = ([]() {
     std::array<index_type, n_full_state> res;
     for (index_type i = 0; i < n_full_state; ++i) {
-      res[i] = i / ratio_full_obs;
+      res[i] = i % n_full_state;
     }
     return res;
   })();
 
-  using transition_config_type = std::array<
-      std::array<std::pair<std::vector<index_type>, std::vector<float_type>>,
-                 n_queue>,
-      n_full_state>;
+  using transition_config_type =
+      std::array<std::array<Eigen::SparseVector<float_type>, n_queue>,
+                 n_full_state>;
   using transition_dist_type =
       std::array<std::array<std::discrete_distribution<index_type>, n_queue>,
                  n_full_state>;
@@ -153,34 +135,35 @@ class Env {
   using reward_func_type =
       std::function<float_type(const env_cost_type&, const full_state_type&)>;
 
-  using q_type = std::array<float_type, n_obs_state * n_queue>;
-  using n_visit_type = std::array<index_type, n_obs_state * n_queue>;
+  using q_type = Eigen::Matrix<float_type, n_obs_state, n_queue>;
+  using n_visit_type = Eigen::Matrix<index_type, n_obs_state, n_queue>;
   using qs_type =
       std::conditional_t<save_qs, std::vector<float_type>, std::nullptr_t>;
 
   using v_type =
-      std::conditional_t<n_env == 1, std::array<float_type, n_obs_state>,
+      std::conditional_t<n_env == 1, Eigen::Matrix<float_type, n_obs_state, 1>,
                          std::nullptr_t>;
   using policy_v_type =
-      std::conditional_t<n_env == 1, std::array<index_type, n_obs_state>,
+      std::conditional_t<n_env == 1, Eigen::Matrix<index_type, n_obs_state, 1>,
                          std::nullptr_t>;
 
   static constexpr auto q_inf_idx = ([]() {
-    std::array<index_type, ((obs_state_idx.size() / (queue_lens_t + 1)) + ...)>
+    std::array<std::pair<index_type, index_type>,
+               ((obs_state_idx.size() / (queue_lens_t + 1)) + ...)>
         inf_idx{};
     index_type cur{};
     for (index_type i = 0; i < dim_obs_state; ++i) {
       for (index_type j = 0; j < n_obs_state; ++j) {
         if (!obs_state_idx[j][i]) {
-          inf_idx[cur++] = j * n_queue + i;
+          inf_idx[cur++] = std::make_pair(j, i);
         }
       }
     }
     return inf_idx;
   })();
 
-  Env(const env_cost_type& env_cost, const env_arrival_type& env_arrival,
-      const env_departure_type& env_departure, const env_prob_type& env_prob,
+  Env(const float_type* env_cost, const float_type* env_arrival,
+      const float_type* env_departure, const float_type* env_prob,
       const reward_func_type& reward_func)
       : env_cost_(env_cost),
         env_arrival_(env_arrival),
@@ -192,13 +175,14 @@ class Env {
         reward_config_(init_reward_config(reward_func)) {}
 
   void reset_q() {
-    q_.fill(0);
+    q_.setZero();
     for (index_type i = 0; i < q_inf_idx.size(); ++i) {
-      q_[q_inf_idx[i]] = -inf_v;
+      const auto [s, a] = q_inf_idx[i];
+      q_(s, a) = -inf_v;
     }
-    q_[0] = 0;
+    q_(0, 0) = 0;
 
-    n_visit_.fill(0);
+    n_visit_.setZero();
   }
 
   void reset_q_epoch(uint64_t seed) {
@@ -208,11 +192,11 @@ class Env {
 
   void step(index_type action) {
     auto next_state_idx = transition_dist_[state_][action](rng_);
-    state_ = transition_config_[state_][action].first[next_state_idx];
+    state_ = transition_config_[state_][action].innerIndexPtr()[next_state_idx];
   }
 
-  void train_q(float_type gamma, float_type eps, float_type decay,
-               index_type epoch, uint64_t ls, uint64_t seed) {
+  void train_q(float_type gamma, float_type eps, float_type decay, size_t epoch,
+               uint64_t ls, uint64_t seed) {
     static constexpr auto iota_n_queue = make_iota<0, n_queue>();
     reset_q();
 
@@ -231,21 +215,19 @@ class Env {
         if (greedy_dis_(rng_) < eps) {
           a = action_dist_[obs_state](rng_);
         } else {
-          const auto it = q_.begin() + obs_state * n_queue;
-          a = std::max_element(it, it + n_queue) - it;
+          q_(obs_state, Eigen::all).maxCoeff(&a);
         }
 
         step(a);
         const auto next_state = state_;
         const auto next_obs_state = map_full_obs[next_state];
 
-        const auto next_it = q_.begin() + next_obs_state * n_queue;
-        const auto next_q = *std::max_element(next_it, next_it + n_queue);
+        const auto next_q = q_(next_obs_state, Eigen::all).maxCoeff();
         const auto reward = reward_config_[state];
 
-        const auto q_idx = obs_state * n_queue + a;
-        q_[q_idx] += (static_cast<float_type>(1) / ++n_visit_[q_idx]) *
-                     (reward + gamma * next_q - q_[q_idx]);
+        q_(obs_state, a) +=
+            (static_cast<float_type>(1) / ++n_visit_(obs_state, a)) *
+            (reward + gamma * next_q - q_(obs_state, a));
 
         if constexpr (save_qs) {
           std::copy(q_.data(), q_.data() + q_.size(),
@@ -272,15 +254,6 @@ class Env {
                     iota_n_obs_state.end(), [gamma, this](index_type j) {
                       update_v_i<true>(gamma, j, v_);
                     });
-    }
-  }
-
-  void from_array(const float_type* q, const index_type* n_visit,
-                  std::span<float_type> qs) {
-    std::copy_n(q, q_.size(), q_.begin());
-    std::copy_n(n_visit, n_visit_.size(), n_visit_.begin());
-    if constexpr (save_qs) {
-      qs_.insert(qs_.begin(), qs.begin(), qs.end());
     }
   }
 
@@ -321,11 +294,10 @@ class Env {
       const auto& s_i = full_state_idx[i];
 
       for (index_type a = 0; a < n_queue; ++a) {
-        if ((i >= ratio_full_obs && !s_i[a]) || (i < ratio_full_obs && a != 0))
-          continue;
+        if ((map_full_obs[i] && !s_i[a]) || (!map_full_obs[i] && a)) continue;
 
         float_type dummy_prob = 1;
-        auto& config_i = config[i][a].second;
+        auto& config_i_a = config[i][a];
 
         for (index_type j = 0; j < n_full_state; ++j) {
           if (i == j) continue;
@@ -334,26 +306,25 @@ class Env {
               s_i, full_state_idx[j], a);
 
           if (next_to) {
-            config[i][a].first.push_back(j);
+            float_type prob;
 
             const auto& [idx_q, change] = next_to.value();
-
             if (idx_q >= n_queue) {
-              config_i.push_back(
-                  env_prob_(idx_q - n_queue, std::get<index_type>(change)));
+              prob = env_prob_(idx_q - n_queue, std::get<index_type>(change));
             } else {
               if (std::get<bool>(change)) {
-                config_i.push_back(env_arrival_(idx_q, s_i[idx_q + n_queue]));
+                prob = env_arrival_(idx_q, s_i[idx_q + n_queue]);
               } else {
-                config_i.push_back(env_departure_(idx_q, s_i[idx_q + n_queue]));
+                prob = env_departure_(idx_q, s_i[idx_q + n_queue]);
               }
             }
+            config_i_a.insertBack(j) = prob;
 
-            dummy_prob -= config_i.back();
+            dummy_prob -= prob;
           }
         }
-        config[i][a].first.push_back(i);
-        config_i.push_back(dummy_prob);
+
+        config_i_a.coeffRef(i) = dummy_prob;
       }
     }
 
@@ -365,10 +336,11 @@ class Env {
 
     for (index_type i = 0; i < n_full_state; ++i) {
       for (index_type a = 0; a < n_queue; ++a) {
-        const auto& config = transition_config_[i][a].second;
-        if (config.size()) {
-          dist[i][a] = std::discrete_distribution<index_type>(config.begin(),
-                                                              config.end());
+        const auto& config = transition_config_[i][a];
+        const auto non_zero = config.nonZeros();
+        if (non_zero) {
+          dist[i][a] = std::discrete_distribution<index_type>(
+              config.valuePtr(), config.valuePtr() + config.nonZeros());
         }
       }
     }
@@ -379,11 +351,10 @@ class Env {
   auto init_action_dist() {
     action_dist_type dist;
     for (index_type i = 0; i < n_obs_state; ++i) {
-      auto full_state = i * ratio_full_obs;
       std::array<index_type, n_queue> possible_action{};
 
       for (index_type j = 0; j < n_queue; ++j) {
-        if (transition_config_[full_state][j].first.size()) {
+        if (transition_config_[i][j].nonZeros()) {
           possible_action[j] = 1;
         }
       }
@@ -412,14 +383,10 @@ class Env {
 
     for (index_type a = 0; a < n_queue; ++a) {
       float_type val_v = reward_config_[j];
-      const auto& [states, probs] = transition_config_[j][a];
+      const auto& config = transition_config_[j][a];
 
-      if (states.empty()) continue;
-
-      for (index_type k = 0; k < states.size(); ++k) {
-        auto s = states[k];
-        val_v += probs[k] * (gamma * v_i[s]);
-      }
+      if (!config.nonZeros()) continue;
+      val_v += gamma * config.transpose() * v_i;
 
       if (max_v < val_v) {
         max_v = val_v;
@@ -443,17 +410,14 @@ class LinearEnv : public Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...> {
  public:
   using env_type = Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...>;
 
+  using float_type = typename env_type::float_type;
   using env_cost_type = typename env_type::env_cost_type;
-  using env_arrival_type = typename env_type::env_arrival_type;
-  using env_departure_type = typename env_type::env_departure_type;
-  using env_prob_type = typename env_type::env_prob_type;
   using full_state_type = typename env_type::full_state_type;
 
   static constexpr char env_name[] = "linear";
 
-  LinearEnv(const env_cost_type& env_cost, const env_arrival_type& env_arrival,
-            const env_departure_type& env_departure,
-            const env_prob_type& env_prob)
+  LinearEnv(const float_type* env_cost, const float_type* env_arrival,
+            const float_type* env_departure, const float_type* env_prob)
       : env_type(
             env_cost, env_arrival, env_departure, env_prob,
             [](const env_cost_type& env_cost, const full_state_type& state) {
@@ -470,19 +434,15 @@ class ConvexEnv : public Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...> {
   using env_type = Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...>;
   static constexpr auto is_convex = true;
 
+  using float_type = typename env_type::float_type;
   using env_cost_type = typename env_type::env_cost_type;
-  using env_arrival_type = typename env_type::env_arrival_type;
-  using env_departure_type = typename env_type::env_departure_type;
-  using env_prob_type = typename env_type::env_prob_type;
   using full_state_type = typename env_type::full_state_type;
 
   static constexpr char env_name[] = "convex";
 
-  using float_type = typename env_type::float_type;
-
-  ConvexEnv(const env_cost_type& env_cost, const env_arrival_type& env_arrival,
-            const env_departure_type& env_departure,
-            const env_prob_type& env_prob, float_type cost_eps)
+  ConvexEnv(const float_type* env_cost, const float_type* env_arrival,
+            const float_type* env_departure, const float_type* env_prob,
+            float_type cost_eps)
       : env_type(env_cost, env_arrival, env_departure, env_prob,
                  [cost_eps](const env_cost_type& env_cost,
                             const full_state_type& state) {
