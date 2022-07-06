@@ -5,10 +5,12 @@
 #include <execution>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <random>
 #include <span>
 #include <tuple>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "Fastor/Fastor.h"
@@ -55,24 +57,26 @@ static constexpr auto make_inf_idx_i() {
   return res;
 }
 
+using transition_status_type =
+    std::optional<std::pair<size_t, std::variant<size_t, bool>>>;
+
 template <size_t dim_full_state, size_t n_queue>
-static constexpr auto can_transition_to(const auto& s1, const auto& s2,
-                                        size_t action) {
-  std::pair<int, int> res{-1, 0};
+static constexpr transition_status_type can_transition_to(const auto& s1,
+                                                          const auto& s2,
+                                                          size_t action) {
+  transition_status_type res{};
 
   for (size_t i = 0; i < dim_full_state; ++i) {
     const auto diff = s2[i] - s1[i];
     if (diff) {
-      if (res.first >= 0) {
-        return std::make_pair(-1, 0);
+      if (res) {
+        return std::nullopt;
       } else if (i >= n_queue) {
-        res.first = i;
-        res.second = s2[i];
+        res = std::make_pair(i, s2[i]);
       } else if ((diff == -1 && i == action) || (diff == 1)) {
-        res.first = i;
-        res.second = diff;
+        res = std::make_pair(i, diff == 1);
       } else {
-        return std::make_pair(-1, 0);
+        return std::nullopt;
       }
     }
   }
@@ -325,18 +329,19 @@ class Env {
           const auto next_to = can_transition_to<dim_full_state, n_queue>(
               s_i, full_state_idx[j], a);
 
-          if (next_to.first >= 0) {
+          if (next_to) {
             config[i][a].first.push_back(j);
 
-            const auto idx_q = next_to.first;
+            const auto& [idx_q, change] = next_to.value();
 
             if (idx_q >= n_queue) {
-              config_i.push_back(env_prob_(idx_q - n_queue, next_to.second));
+              config_i.push_back(
+                  env_prob_(idx_q - n_queue, std::get<size_t>(change)));
             } else {
-              if (next_to.second == -1) {
-                config_i.push_back(env_departure_(idx_q, s_i[idx_q + n_queue]));
-              } else if (next_to.second == 1) {
+              if (std::get<bool>(change)) {
                 config_i.push_back(env_arrival_(idx_q, s_i[idx_q + n_queue]));
+              } else {
+                config_i.push_back(env_departure_(idx_q, s_i[idx_q + n_queue]));
               }
             }
 
