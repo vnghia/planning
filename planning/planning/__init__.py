@@ -8,7 +8,8 @@ import plotly.graph_objects as go
 import plotly.subplots as sp
 from matplotlib import colors
 
-from .planning_ext import *
+from planning import planning_ext
+from planning.planning_ext import Reward
 
 
 class Env:
@@ -38,13 +39,12 @@ class Env:
         self.dims_queue = tuple(np.array(self.lens) + 1)
 
         self.C = C or 1
-        self.env_type = env_type or "linear"
+        self.env_type = env_type or Reward.linear_2
         self.cost_eps = cost_eps if cost_eps is not None else 1
         self.save_qs = bool(save_qs)
 
         self.__env = vars(planning_ext)[
-            f"{self.env_type}"
-            f"_{self.n_env}"
+            f"env_{self.n_env}"
             f"_{int(self.save_qs)}"
             f"_{self.lens[0]}"
             f"_{self.lens[1]}"
@@ -53,6 +53,7 @@ class Env:
             self.arrival.ravel("F") / self.C,
             self.departure.ravel("F") / self.C,
             self.prob.ravel("F") / self.C,
+            self.env_type,
             self.cost_eps,
         )
 

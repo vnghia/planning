@@ -72,11 +72,11 @@ static constexpr transition_status_type can_transition_to(const auto& s1,
   return res;
 }
 
-template <index_type n_queue_t, index_type n_env_t, typename float_t,
-          bool save_qs_t, index_type... queue_lens_t>
+template <index_type n_env_t, typename float_t, bool save_qs_t,
+          index_type... queue_lens_t>
 class Env {
  public:
-  static constexpr auto n_queue = n_queue_t;
+  static constexpr index_type n_queue = sizeof...(queue_lens_t);
   static constexpr auto n_env = n_env_t;
 
   using float_type = float_t;
@@ -404,54 +404,17 @@ class Env {
   }
 };
 
-template <index_type n_env_t, typename float_t, bool save_qs_t,
-          index_type... queue_lens_t>
-class LinearEnv : public Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...> {
- public:
-  using env_type = Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...>;
+enum class Reward { linear_2, convex_2 };
 
-  using float_type = typename env_type::float_type;
-  using env_cost_type = typename env_type::env_cost_type;
-  using full_state_type = typename env_type::full_state_type;
-
-  static constexpr char env_name[] = "linear";
-
-  LinearEnv(const float_type* env_cost, const float_type* env_arrival,
-            const float_type* env_departure, const float_type* env_prob)
-      : env_type(
-            env_cost, env_arrival, env_departure, env_prob,
-            [](const env_cost_type& env_cost, const full_state_type& state) {
-              return -(
-                  env_cost(0, state[env_type::offset_full_obs + 0]) * state[0] +
-                  env_cost(1, state[env_type::offset_full_obs + 1]) * state[1]);
-            }) {}
+static constexpr auto linear_reward_2 = [](const auto& env_cost,
+                                           const auto& state, auto offset) {
+  return -(env_cost(0, state[offset + 0]) * state[0] +
+           env_cost(1, state[offset + 1]) * state[1]);
 };
 
-template <index_type n_env_t, typename float_t, bool save_qs_t,
-          index_type... queue_lens_t>
-class ConvexEnv : public Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...> {
- public:
-  using env_type = Env<2, n_env_t, float_t, save_qs_t, queue_lens_t...>;
-  static constexpr auto is_convex = true;
-
-  using float_type = typename env_type::float_type;
-  using env_cost_type = typename env_type::env_cost_type;
-  using full_state_type = typename env_type::full_state_type;
-
-  static constexpr char env_name[] = "convex";
-
-  ConvexEnv(const float_type* env_cost, const float_type* env_arrival,
-            const float_type* env_departure, const float_type* env_prob,
-            float_type cost_eps)
-      : env_type(env_cost, env_arrival, env_departure, env_prob,
-                 [cost_eps](const env_cost_type& env_cost,
-                            const full_state_type& state) {
-                   return -(env_cost(0, state[env_type::offset_full_obs + 0]) *
-                                state[0] +
-                            env_cost(1, state[env_type::offset_full_obs + 1]) *
-                                (state[1] * state[1] * cost_eps + state[1]));
-                 }) {}
-};
-
-template <typename T>
-concept env_is_convex = T::is_convex;
+static constexpr auto convex_reward_2 =
+    [](const auto& env_cost, const auto& state, auto offset, auto cost_eps) {
+      return -(env_cost(0, state[offset + 0]) * state[0] +
+               env_cost(1, state[offset + 1]) *
+                   (state[1] * state[1] * cost_eps + state[1]));
+    };
