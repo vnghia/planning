@@ -54,7 +54,7 @@ class Env:
             self.departure.ravel("F") / self.C,
             self.prob.ravel("F") / self.C,
             self.env_type,
-            self.cost_eps,
+            cost_eps=self.cost_eps,
         )
 
         self._policy_q = None

@@ -1,7 +1,6 @@
 #include "planning/env.h"
 
 #include <array>
-#include <span>
 #include <string>
 
 #include "nanobind/nanobind.h"
@@ -12,9 +11,9 @@ namespace nb = nanobind;
 
 using namespace nb::literals;
 
-template <bool condition, typename data_type>
+template <bool condition_t, typename data_type>
 static constexpr auto make_return_tensor(const auto &v) {
-  if constexpr (condition) {
+  if constexpr (condition_t) {
     constexpr auto n_dim = 1;
     const size_t dims[] = {static_cast<size_t>(v.size())};
     return nb::tensor<nb::numpy, data_type>(const_cast<data_type *>(v.data()),
@@ -42,7 +41,8 @@ void make_env(nb::module_ &m) {
   static constexpr auto init = [](env_type *env, param_type env_cost,
                                   param_type env_arrival,
                                   param_type env_departure, param_type env_prob,
-                                  Reward reward_type, env_float_type cost_eps) {
+                                  Reward reward_type,
+                                  const nb::kwargs &kwargs) {
     static constexpr auto offset = env_type::offset_full_obs;
 
     auto reward_func = typename env_type::reward_func_type{};
@@ -53,7 +53,8 @@ void make_env(nb::module_ &m) {
         };
         break;
       case Reward::convex_2:
-        reward_func = [cost_eps](const auto &env_cost, const auto &state) {
+        reward_func = [cost_eps = nb::cast<env_float_type>(kwargs["cost_eps"])](
+                          const auto &env_cost, const auto &state) {
           return convex_reward_2(env_cost, state, offset, cost_eps);
         };
         break;
