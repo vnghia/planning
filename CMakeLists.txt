@@ -53,5 +53,7 @@ if(SKBUILD)
 endif()
 
 find_path(DBG_MACRO_INCLUDE_DIRS "dbg.h")
+find_package(Eigen3 CONFIG REQUIRED)
+find_package(tsl-sparse-map CONFIG REQUIRED)
 
 add_subdirectory(planning)

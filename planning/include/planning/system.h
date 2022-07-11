@@ -15,9 +15,10 @@
 #include "Eigen/Dense"
 #include "Eigen/SparseCore"
 #include "planning/xoshiro.h"
+#include "tsl/sparse_map.h"
 #include "unsupported/Eigen/CXX11/Tensor"
 
-using index_type = int;
+using index_type = Eigen::Index;
 
 template <index_type begin, index_type end>
 static constexpr auto make_iota() {
@@ -119,14 +120,39 @@ class System {
     return res;
   })();
 
+  static constexpr auto env_states =
+      ([]<index_type... i>(std::integer_sequence<index_type, i...>) {
+        return make_set_product<n_env*(i - i + 1)...>();
+      })(seq_nc);
+
+  static constexpr auto n_env_state = env_states.size();
+  using env_states_type = typename decltype(env_states)::value_type;
+  static constexpr auto dim_env_state = std::tuple_size<env_states_type>::value;
+
+  static constexpr auto to_env_state = ([]() {
+    std::array<index_type, n_state> res;
+    for (index_type i = 0; i < n_state; ++i) {
+      res[i] = i / n_cls_state;
+    }
+    return res;
+  })();
+
+  using sp_vec_type = Eigen::SparseVector<float_type>;
+  using sp_vec_it = typename sp_vec_type::InnerIterator;
+
   using trans_probs_type =
-      std::array<std::array<Eigen::SparseVector<float_type>, n_class>, n_state>;
+      std::array<std::array<sp_vec_type, n_class>, n_state>;
   using trans_dists_type =
       std::array<std::array<std::discrete_distribution<index_type>, n_class>,
                  n_state>;
   using action_dists_type =
       std::array<std::discrete_distribution<index_type>, n_cls_state>;
   using rewards_type = std::array<float_type, n_state>;
+
+  using cls_trans_probs_type =
+      std::array<std::array<tsl::sparse_map<index_type, sp_vec_type>, n_class>,
+                 n_cls_state>;
+  using env_trans_probs_type = std::array<sp_vec_type, n_env_state>;
 
   using reward_func_type =
       std::function<float_type(const costs_type&, const states_type&)>;
@@ -170,6 +196,8 @@ class System {
         trans_probs_(init_trans_probs()),
         trans_dists_(init_trans_dists()),
         action_dists_(init_action_dists()),
+        cls_trans_probs_(init_cls_trans_probs()),
+        env_trans_probs_(init_env_trans_probs()),
         rewards_(init_rewards(reward_func)) {}
 
   void reset_q() {
@@ -271,6 +299,10 @@ class System {
   const trans_probs_type trans_probs_;
   trans_dists_type trans_dists_;
   action_dists_type action_dists_;
+
+  const cls_trans_probs_type cls_trans_probs_;
+  const env_trans_probs_type env_trans_probs_;
+
   const rewards_type rewards_;
 
   index_type state_;
@@ -387,6 +419,47 @@ class System {
     }
 
     return dists;
+  }
+
+  auto init_cls_trans_probs() {
+    cls_trans_probs_type probs;
+
+    for (index_type i = 0; i < n_state; ++i) {
+      const auto i_cls = to_cls_state[i];
+      const auto i_env = to_env_state[i];
+
+      for (index_type a = 0; a < n_class; ++a) {
+        const auto& trans_prob = trans_probs_[i][a];
+
+        for (sp_vec_it it(trans_prob); it; ++it) {
+          const auto j = it.index();
+          const auto j_cls = to_cls_state[j];
+          const auto prob = it.value();
+          probs[j_cls][a].try_emplace(i_cls).first.value().coeffRef(i_env) +=
+              prob;
+        }
+      }
+    }
+
+    return probs;
+  }
+
+  auto init_env_trans_probs() {
+    env_trans_probs_type probs;
+
+    for (index_type i = 0; i < n_env_state; ++i) {
+      const auto& trans_prob = trans_probs_[i * n_cls_state][0];
+
+      for (sp_vec_it it(trans_prob); it; ++it) {
+        const auto j = it.index();
+        const auto j_env = to_env_state[j];
+        const auto prob = it.value();
+
+        probs[i].coeffRef(j_env) += prob;
+      }
+    }
+
+    return probs;
   }
 
   auto init_rewards(const reward_func_type& reward_func) {
