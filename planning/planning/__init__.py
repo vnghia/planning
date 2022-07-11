@@ -38,13 +38,6 @@ class System:
             if self.n_env > 1
             else np.zeros((self.n_class, 1, 1))
         )
-        np.einsum("ijj->ij", self.env_trans_probs)[...] = 0
-
-        self.C = (
-            self.arrivals.max(axis=-1).sum()
-            + +self.departures.max()
-            + self.env_trans_probs.sum(axis=-1).max(axis=-1).sum()
-        )
 
         self.class_dims = tuple(np.array(self.limits) + 1)
 
@@ -61,9 +54,9 @@ class System:
 
         self.__sys = vars(planning_ext)[self.cpp_type](
             self.costs.ravel("F"),
-            self.arrivals.ravel("F") / self.C,
-            self.departures.ravel("F") / self.C,
-            self.env_trans_probs.ravel("F") / self.C,
+            self.arrivals.ravel("F"),
+            self.departures.ravel("F"),
+            self.env_trans_probs.ravel("F"),
             self.reward_type,
             **self.kwargs,
         )
@@ -79,8 +72,8 @@ class System:
         for i in range(self.n_env):
             self.summary[f"Env {i + 1}"] = (
                 self.costs[:, i].tolist()
-                + (self.arrivals[:, i] / self.C).tolist()
-                + (self.departures[:, i] / self.C).tolist()
+                + (self.arrivals[:, i]).tolist()
+                + (self.departures[:, i]).tolist()
             )
 
     def __repr__(self):

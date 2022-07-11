@@ -15,6 +15,7 @@
 #include "Eigen/Dense"
 #include "Eigen/SparseCore"
 #include "planning/xoshiro.h"
+#include "unsupported/Eigen/CXX11/Tensor"
 
 using index_type = int;
 
@@ -86,8 +87,8 @@ class System {
   using costs_type = Eigen::Matrix<float_type, n_class, n_env>;
   using arrivals_type = costs_type;
   using departures_type = costs_type;
-  using env_trans_probs_type =
-      Eigen::Matrix<float_type, n_class, n_env * n_env>;
+  using env_trans_mats_type =
+      Eigen::TensorFixedSize<float_type, Eigen::Sizes<n_class, n_env, n_env>>;
 
   static constexpr auto seq_nc =
       std::make_integer_sequence<index_type, n_class>{};
@@ -158,12 +159,14 @@ class System {
   })();
 
   System(const float_type* costs, const float_type* arrivals,
-         const float_type* departures, const float_type* env_trans_probs,
-         const reward_func_type& reward_func)
+         const float_type* departures, const float_type* env_trans_mats,
+         const reward_func_type& reward_func,
+         const std::optional<float_type>& normalized_c = std::nullopt)
       : costs(costs),
         arrivals_(arrivals),
         departures_(departures),
-        env_trans_probs_(env_trans_probs),
+        env_trans_mats_(init_env_trans_mats(env_trans_mats)),
+        normalized_c_(init_normalized_c(normalized_c)),
         trans_probs_(init_trans_probs()),
         trans_dists_(init_trans_dists()),
         action_dists_(init_action_dists()),
@@ -262,7 +265,8 @@ class System {
   const costs_type costs;
   const arrivals_type arrivals_;
   const departures_type departures_;
-  const env_trans_probs_type env_trans_probs_;
+  const env_trans_mats_type env_trans_mats_;
+  const float_type normalized_c_;
 
   const trans_probs_type trans_probs_;
   trans_dists_type trans_dists_;
@@ -281,6 +285,30 @@ class System {
   XoshiroCpp::Xoshiro256Plus rng_;
   std::uniform_real_distribution<float_type> greedy_dis_;
 
+  auto init_env_trans_mats(const float_type* env_trans_mats) {
+    env_trans_mats_type probs = Eigen::TensorMap<const env_trans_mats_type>(
+        env_trans_mats, n_class, n_env, n_env);
+
+    for (index_type i = 0; i < n_class; ++i) {
+      for (index_type j = 0; j < n_env; ++j) {
+        probs(i, j, j) = 0;
+      }
+    }
+
+    return probs;
+  }
+
+  float_type init_normalized_c(const std::optional<float_type>& normalized_c) {
+    if (normalized_c) return normalized_c.value();
+
+    static const Eigen::array<index_type, 1> sum_dims({2});
+    static const Eigen::array<index_type, 1> max_dims({1});
+
+    return Eigen::Tensor<double, 0>(
+        arrivals_.rowwise().maxCoeff().sum() + departures_.maxCoeff() +
+        env_trans_mats_.sum(sum_dims).maximum(max_dims).sum())(0);
+  }
+
   auto init_trans_probs() {
     trans_probs_type probs;
 
@@ -290,7 +318,7 @@ class System {
       for (index_type a = 0; a < n_class; ++a) {
         if ((to_cls_state[i] && !s_i[a]) || (!to_cls_state[i] && a)) continue;
 
-        float_type dummy_prob = 1;
+        float_type dummy_prob = normalized_c_;
         auto& prob_i_a = probs[i][a];
 
         for (index_type j = 0; j < n_state; ++j) {
@@ -306,8 +334,7 @@ class System {
             const auto idx = next_to.value();
 
             if (idx >= n_class) {
-              prob = env_trans_probs_(idx - n_class,
-                                      s_i[idx] + s_j[idx] * n_class);
+              prob = env_trans_mats_(idx - n_class, s_i[idx], s_j[idx]);
             } else if (s_i[idx] < s_j[idx]) {
               prob = arrivals_(idx, s_i[idx + n_class]);
             } else {

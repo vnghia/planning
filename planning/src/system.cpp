@@ -1,6 +1,7 @@
 #include "planning/system.h"
 
 #include <array>
+#include <optional>
 #include <string>
 
 #include "nanobind/nanobind.h"
@@ -38,32 +39,38 @@ void make_system(nb::module_ &m) {
 
   auto cls = nb::class_<system_type>(m, name.c_str());
 
-  static constexpr auto init =
-      [](system_type *s, param_type costs, param_type arrivals,
-         param_type departures, param_type env_trans_probs, Reward reward_type,
-         const nb::kwargs &kwargs) {
-        static constexpr auto offset = system_type::n_class;
+  static constexpr auto init = [](system_type *s, param_type costs,
+                                  param_type arrivals, param_type departures,
+                                  param_type env_trans_probs,
+                                  Reward reward_type,
+                                  const nb::kwargs &kwargs) {
+    static constexpr auto offset = system_type::n_class;
 
-        auto reward_func = typename system_type::reward_func_type{};
-        switch (reward_type) {
-          case Reward::linear_2:
-            reward_func = [](const auto &costs, const auto &state) {
-              return linear_reward_2(costs, state, offset);
-            };
-            break;
-          case Reward::convex_2:
-            reward_func = [cost_eps = nb::cast<float_type>(kwargs["cost_eps"])](
-                              const auto &costs, const auto &state) {
-              return convex_reward_2(costs, state, offset, cost_eps);
-            };
-            break;
-        }
-        new (s) system_type(static_cast<float_type *>(costs.data()),
-                            static_cast<float_type *>(arrivals.data()),
-                            static_cast<float_type *>(departures.data()),
-                            static_cast<float_type *>(env_trans_probs.data()),
-                            reward_func);
-      };
+    std::optional<float_type> normalized_c =
+        PyDict_GetItemString(kwargs.ptr(), "normalized_c")
+            ? std::make_optional(nb::cast<float_type>(kwargs["normalized_c"]))
+            : std::nullopt;
+
+    auto reward_func = typename system_type::reward_func_type{};
+    switch (reward_type) {
+      case Reward::linear_2:
+        reward_func = [](const auto &costs, const auto &state) {
+          return linear_reward_2(costs, state, offset);
+        };
+        break;
+      case Reward::convex_2:
+        reward_func = [cost_eps = nb::cast<float_type>(kwargs["cost_eps"])](
+                          const auto &costs, const auto &state) {
+          return convex_reward_2(costs, state, offset, cost_eps);
+        };
+        break;
+    }
+    new (s) system_type(static_cast<float_type *>(costs.data()),
+                        static_cast<float_type *>(arrivals.data()),
+                        static_cast<float_type *>(departures.data()),
+                        static_cast<float_type *>(env_trans_probs.data()),
+                        reward_func, normalized_c);
+  };
 
   cls.def("__init__", init);
 
@@ -133,5 +140,5 @@ NB_MODULE(planning_ext, m) {
       .value("linear_2", Reward::linear_2)
       .value("convex_2", Reward::convex_2);
 
-  make_system_2<double, false, 3, 7, 10, 15, 20, 25, 30, 40, 50>(m);
+  make_system_2<double, false, 3>(m);
 }
