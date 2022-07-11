@@ -20,7 +20,6 @@ class Env:
         arrival,
         departure,
         prob=None,
-        C=None,
         env_type=None,
         cost_eps=None,
         save_qs=None,
@@ -30,15 +29,25 @@ class Env:
         self.cost = np.array(cost).reshape((2, -1))
         self.arrival = np.array(arrival).reshape((2, -1))
         self.departure = np.array(departure).reshape((2, -1))
+
+        self.n_env = self.cost.shape[1]
         self.prob = (
-            np.array(prob).reshape((2, -1)) if prob is not None else np.zeros((2, 1))
+            np.array(prob).reshape((2, self.n_env, self.n_env))
+            if prob is not None
+            else np.zeros((2, 1, 1))
         )
+        np.einsum("ijj->ij", self.prob)[...] = 0
 
         self.n_queue = 2
-        self.n_env = self.cost.shape[1]
+
         self.dims_queue = tuple(np.array(self.lens) + 1)
 
-        self.C = C or 1
+        self.C = (
+            self.arrival.max(axis=-1).sum()
+            + +self.departure.max()
+            + self.prob.sum(axis=-1).max(axis=-1).sum()
+        )
+
         self.env_type = env_type or Reward.linear_2
         self.cost_eps = cost_eps if cost_eps is not None else 1
         self.save_qs = bool(save_qs)
@@ -64,14 +73,12 @@ class Env:
             [f"Cost {i + 1}" for i in range(self.n_queue)]
             + [f"Arrival {i + 1}" for i in range(self.n_queue)]
             + [f"Departure {i + 1}" for i in range(self.n_queue)]
-            + [f"Probability {i + 1}" for i in range(self.n_queue)]
         )
         for i in range(self.n_env):
             self.summary[f"Env {i + 1}"] = (
                 self.cost[:, i].tolist()
                 + (self.arrival[:, i] / self.C).tolist()
                 + (self.departure[:, i] / self.C).tolist()
-                + (self.prob[:, i] / self.C).tolist()
             )
 
     def __repr__(self):
@@ -82,7 +89,6 @@ class Env:
             f" arrival: {self.arrival}"
             f" departure: {self.departure}"
             f" prob: {self.prob}"
-            f" C: {self.C}"
             ""
             if self.env_type != "convex"
             else f" cost_eps: {self.cost_eps}"
@@ -97,7 +103,6 @@ class Env:
             arrival=self.arrival,
             departure=self.departure,
             prob=self.prob,
-            C=self.C,
             env_type=self.env_type,
             cost_eps=self.cost_eps,
             save_qs=self.save_qs,
@@ -116,7 +121,6 @@ class Env:
             data["arrival"],
             data["departure"],
             data["prob"],
-            data["C"].item(),
             data["env_type"].item(),
             data["cost_eps"].item(),
             data["save_qs"].item(),
@@ -322,7 +326,6 @@ class Env:
         arrival,
         departure,
         prob=None,
-        C=None,
         env_type=None,
         cost_eps=None,
         save_qs=None,
@@ -333,7 +336,7 @@ class Env:
         ls=None,
         seed=None,
     ):
-        env = cls(lens, cost, arrival, departure, prob, C, env_type, cost_eps, save_qs)
+        env = cls(lens, cost, arrival, departure, prob, env_type, cost_eps, save_qs)
         env.train_q(gamma, eps, decay, epoch, ls, seed)
         return env
 
@@ -344,7 +347,6 @@ class Env:
         arrival,
         departure,
         prob=None,
-        C=None,
         env_type=None,
         cost_eps=None,
         save_qs=None,
@@ -361,7 +363,6 @@ class Env:
             arrival,
             departure,
             prob,
-            C,
             env_type,
             cost_eps,
             save_qs,

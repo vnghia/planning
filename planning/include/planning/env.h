@@ -45,8 +45,7 @@ static constexpr auto make_set_product() {
   return product;
 }
 
-using transition_status_type =
-    std::optional<std::pair<index_type, std::variant<index_type, bool>>>;
+using transition_status_type = std::optional<index_type>;
 
 template <index_type dim_full_state, index_type n_queue>
 static constexpr transition_status_type can_transition_to(const auto& s1,
@@ -59,10 +58,9 @@ static constexpr transition_status_type can_transition_to(const auto& s1,
     if (diff) {
       if (res) {
         return std::nullopt;
-      } else if (i >= n_queue) {
-        res = std::make_pair(i, s2[i]);
-      } else if ((diff == -1 && i == action) || (diff == 1)) {
-        res = std::make_pair(i, diff == 1);
+      } else if ((i >= n_queue) ||
+                 ((diff == -1 && i == action) || (diff == 1))) {
+        res = i;
       } else {
         return std::nullopt;
       }
@@ -88,7 +86,7 @@ class Env {
   using env_cost_type = Eigen::Matrix<float_type, n_queue, n_env>;
   using env_arrival_type = env_cost_type;
   using env_departure_type = env_cost_type;
-  using env_prob_type = env_cost_type;
+  using env_prob_type = Eigen::Matrix<float_type, n_queue, n_env * n_env>;
 
   static constexpr auto idx_nq =
       std::make_integer_sequence<index_type, n_queue>{};
@@ -302,22 +300,25 @@ class Env {
         for (index_type j = 0; j < n_full_state; ++j) {
           if (i == j) continue;
 
-          const auto next_to = can_transition_to<dim_full_state, n_queue>(
-              s_i, full_state_idx[j], a);
+          const auto& s_j = full_state_idx[j];
+          const auto next_to =
+              can_transition_to<dim_full_state, n_queue>(s_i, s_j, a);
 
           if (next_to) {
             float_type prob;
 
-            const auto& [idx_q, change] = next_to.value();
-            if (idx_q >= n_queue) {
-              prob = env_prob_(idx_q - n_queue, std::get<index_type>(change));
+            const auto idx = next_to.value();
+
+            if (idx >= n_queue) {
+              prob = env_prob_(idx - offset_full_obs,
+                               s_i[idx] * n_queue + s_j[idx]);
+            } else if (const auto idx_e = idx + offset_full_obs;
+                       s_i[idx] < s_j[idx]) {
+              prob = env_arrival_(idx, s_i[idx_e]);
             } else {
-              if (std::get<bool>(change)) {
-                prob = env_arrival_(idx_q, s_i[idx_q + n_queue]);
-              } else {
-                prob = env_departure_(idx_q, s_i[idx_q + n_queue]);
-              }
+              prob = env_departure_(idx, s_i[idx_e]);
             }
+
             config_i_a.insertBack(j) = prob;
 
             dummy_prob -= prob;
