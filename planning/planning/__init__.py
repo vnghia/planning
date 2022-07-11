@@ -12,100 +12,92 @@ from planning import planning_ext
 from planning.planning_ext import Reward
 
 
-class Env:
+class System:
     def __init__(
         self,
-        lens,
-        cost,
-        arrival,
-        departure,
-        prob=None,
-        env_type=None,
-        cost_eps=None,
+        limits,
+        costs,
+        arrivals,
+        departures,
+        env_trans_probs=None,
+        reward_type=None,
         save_qs=None,
+        **kwargs,
     ):
-        self.lens = lens
+        self.limits = limits
+        self.n_class = len(self.limits)
 
-        self.cost = np.array(cost).reshape((2, -1))
-        self.arrival = np.array(arrival).reshape((2, -1))
-        self.departure = np.array(departure).reshape((2, -1))
+        self.costs = np.array(costs).reshape((self.n_class, -1))
+        self.n_env = self.costs.shape[1]
 
-        self.n_env = self.cost.shape[1]
-        self.prob = (
-            np.array(prob).reshape((2, self.n_env, self.n_env))
-            if prob is not None
-            else np.zeros((2, 1, 1))
+        self.arrivals = np.array(arrivals).reshape((self.n_class, self.n_env))
+        self.departures = np.array(departures).reshape((self.n_class, self.n_env))
+
+        self.env_trans_probs = (
+            np.array(env_trans_probs).reshape((self.n_class, self.n_env, self.n_env))
+            if self.n_env > 1
+            else np.zeros((self.n_class, 1, 1))
         )
-        np.einsum("ijj->ij", self.prob)[...] = 0
-
-        self.n_queue = 2
-
-        self.dims_queue = tuple(np.array(self.lens) + 1)
+        np.einsum("ijj->ij", self.env_trans_probs)[...] = 0
 
         self.C = (
-            self.arrival.max(axis=-1).sum()
-            + +self.departure.max()
-            + self.prob.sum(axis=-1).max(axis=-1).sum()
+            self.arrivals.max(axis=-1).sum()
+            + +self.departures.max()
+            + self.env_trans_probs.sum(axis=-1).max(axis=-1).sum()
         )
 
-        self.env_type = env_type or Reward.linear_2
-        self.cost_eps = cost_eps if cost_eps is not None else 1
-        self.save_qs = bool(save_qs)
+        self.class_dims = tuple(np.array(self.limits) + 1)
 
-        self.__env = vars(planning_ext)[
-            f"env_{self.n_env}"
+        self.reward_type = reward_type or Reward.linear_2
+        self.save_qs = bool(save_qs)
+        self.kwargs = kwargs
+
+        self.cpp_type = (
+            f"system_{self.n_env}"
             f"_{int(self.save_qs)}"
-            f"_{self.lens[0]}"
-            f"_{self.lens[1]}"
-        ](
-            self.cost.ravel("F"),
-            self.arrival.ravel("F") / self.C,
-            self.departure.ravel("F") / self.C,
-            self.prob.ravel("F") / self.C,
-            self.env_type,
-            cost_eps=self.cost_eps,
+            f"_{self.limits[0]}"
+            f"_{self.limits[1]}"
+        )
+
+        self.__sys = vars(planning_ext)[self.cpp_type](
+            self.costs.ravel("F"),
+            self.arrivals.ravel("F") / self.C,
+            self.departures.ravel("F") / self.C,
+            self.env_trans_probs.ravel("F") / self.C,
+            self.reward_type,
+            **self.kwargs,
         )
 
         self._policy_q = None
 
         self.summary = pd.DataFrame()
-        self.summary["name"] = (
-            [f"Cost {i + 1}" for i in range(self.n_queue)]
-            + [f"Arrival {i + 1}" for i in range(self.n_queue)]
-            + [f"Departure {i + 1}" for i in range(self.n_queue)]
+        self.summary["Param"] = (
+            [f"Cost {i + 1}" for i in range(self.n_class)]
+            + [f"Arrival {i + 1}" for i in range(self.n_class)]
+            + [f"Departure {i + 1}" for i in range(self.n_class)]
         )
         for i in range(self.n_env):
             self.summary[f"Env {i + 1}"] = (
-                self.cost[:, i].tolist()
-                + (self.arrival[:, i] / self.C).tolist()
-                + (self.departure[:, i] / self.C).tolist()
+                self.costs[:, i].tolist()
+                + (self.arrivals[:, i] / self.C).tolist()
+                + (self.departures[:, i] / self.C).tolist()
             )
 
     def __repr__(self):
-        return (
-            f"{self.env_type}_env:"
-            f" lens: {self.lens}"
-            f" cost: {self.cost}"
-            f" arrival: {self.arrival}"
-            f" departure: {self.departure}"
-            f" prob: {self.prob}"
-            ""
-            if self.env_type != "convex"
-            else f" cost_eps: {self.cost_eps}"
-        )
+        return self.cpp_type
 
     def __getstate__(self):
         state = io.BytesIO()
         np.savez_compressed(
             state,
-            lens=self.lens,
-            cost=self.cost,
-            arrival=self.arrival,
-            departure=self.departure,
-            prob=self.prob,
-            env_type=self.env_type,
-            cost_eps=self.cost_eps,
+            limits=self.limits,
+            costs=self.costs,
+            arrivals=self.arrivals,
+            departures=self.departures,
+            env_trans_probs=self.env_trans_probs,
+            reward_type=self.reward_type,
             save_qs=self.save_qs,
+            kwargs=self.kwargs,
             q=self.q,
             n_visit=self.n_visit,
             qs=self.qs,
@@ -116,20 +108,24 @@ class Env:
     def __setstate__(self, state):
         data = np.load(io.BytesIO(state), allow_pickle=True)
         self.__init__(
-            data["lens"],
-            data["cost"],
-            data["arrival"],
-            data["departure"],
-            data["prob"],
-            data["env_type"].item(),
-            data["cost_eps"].item(),
+            data["limits"],
+            data["costs"],
+            data["arrivals"],
+            data["departures"],
+            data["env_trans_probs"],
+            data["reward_type"].item(),
             data["save_qs"].item(),
+            **data["kwargs"].item(),
         )
 
         self._q = data["q"]
         self._n_visit = data["n_visit"]
         self._qs = data["qs"] if self.save_qs else None
         self._policy_q = data["policy_q"]
+
+    @classmethod
+    def __to_c_major(_, data, shape):
+        return np.reshape(np.ravel(data, order="C"), shape, order="F")
 
     def train_q(
         self,
@@ -147,31 +143,24 @@ class Env:
         ls = ls or 100000000
         seed = seed or 42
 
-        self.__env.train_q(gamma, eps, decay, epoch, ls, seed)
+        self.__sys.train_q(gamma, eps, decay, epoch, ls, seed)
 
-        shape = self.dims_queue + (self.n_queue,)
-        self._q = np.reshape(np.ravel(self.__env.q, order="C"), shape, order="F")
-        self._n_visit = np.reshape(
-            np.ravel(self.__env.n_visit, order="C"), shape, order="F"
+        shape = self.class_dims + (self.n_class,)
+        self._q = self.__to_c_major(self.__sys.q, shape)
+        self._n_visit = self.__to_c_major(self.__sys.n_visit, shape)
+        self._qs = (
+            self.__to_c_major(self.__sys.qs, (-1,) + shape) if self.save_qs else None
         )
-        if self.save_qs:
-            self._qs = np.reshape(
-                np.ravel(self.__env.qs, order="C"), (-1,) + shape, order="F"
-            )
         self._policy_q = np.argmax(self.q, axis=-1)
 
     def train_v(self, gamma=None, ls=None):
         gamma = gamma or 0.9
         ls = ls or 1000
 
-        self.__env.train_v(gamma, ls)
+        self.__sys.train_v(gamma, ls)
 
-        self._v = np.reshape(
-            np.ravel(self.__env.v, order="C"), self.dims_queue, order="F"
-        )
-        self._policy_v = np.reshape(
-            np.ravel(self.__env.policy_v, order="C"), self.dims_queue, order="F"
-        )
+        self._v = self.__to_c_major(self.__sys.v, self.class_dims)
+        self._policy_v = self.__to_c_major(self.__sys.policy_v, self.class_dims)
 
     @property
     def q(self):
@@ -197,10 +186,13 @@ class Env:
     def policy_v(self):
         return self._policy_v
 
-    def show_policy(self, algo="q", ax=None, info=""):
+    def show_policy(self, algo="q", info=""):
+        if self.n_class != 2:
+            return
+
         policy = self.policy_q if algo == "q" else self.policy_v
 
-        ax = ax or plt.axes()
+        ax = plt.axes()
         fig = ax.get_figure()
         cmap = colors.ListedColormap(["lightgray", "black"])
         bounds = [0, 1, 2]
@@ -213,11 +205,11 @@ class Env:
 
         ax.set_yticks(np.arange(-0.5, policy.shape[0], 1), minor=True)
         ax.set_xticks(np.arange(-0.5, policy.shape[1], 1), minor=True)
-        ax.grid(which="minor", color="w", linestyle="-", linewidth=1)
 
         ax.set_title(f"policy_{algo}{info}")
+        plt.show()
 
-    def show_qs(self, info="", index=None):
+    def show_qs(self, index=None, info=""):
         qs = self.qs.transpose(1, 2, 3, 0)
         qs = qs if index is None else qs[index]
         qs.shape = (1,) * (4 - qs.ndim) + qs.shape
@@ -231,46 +223,37 @@ class Env:
                 plt.title(f"L1 = {l1} - L2 = {l2}{info}")
                 plt.show()
 
-    def show_cost(self, ax=None, info=""):
-        ax = ax or plt.axes()
-        x1 = np.linspace(0, self.lens[0], 100)
+    def show_ratio(self, info=""):
+        if self.n_class != 2:
+            return
+
+        ax = plt.axes()
+        x1 = np.linspace(0, self.limits[0], 100)
         y1 = x1
-        x2 = np.linspace(0, self.lens[1], 100)
+        x2 = np.linspace(0, self.limits[1], 100)
         y2 = x2
-        if self.env_type == "convex":
+        if self.reward_type == Reward.convex_2:
             y2 = x2**2
 
         for i in range(self.n_env):
-            ax.plot(x1, self.cost[0, i] * y1, label=f"env {i} cost 0")
-            ax.plot(x2, self.cost[1, i] * y2, label=f"env {i} cost 1")
-
-        ax.legend()
-        ax.set_title(f"cost{info}")
-
-    def show_ratio(self, ax=None, info=""):
-        ax = ax or plt.axes()
-        x1 = np.linspace(0, self.lens[0], 100)
-        y1 = x1
-        x2 = np.linspace(0, self.lens[1], 100)
-        y2 = x2
-        if self.env_type == "convex":
-            y2 = x2**2
-
-        for i in range(self.n_env):
-            r1 = self.cost[0, i] / self.departure[0, i]
-            r2 = self.cost[1, i] / self.departure[1, i]
+            r1 = self.costs[0, i] / self.departures[0, i]
+            r2 = self.costs[1, i] / self.departures[1, i]
             ax.plot(x1, r1 * y1, label=f"env {i} ratio 0")
             ax.plot(x2, r2 * y2, label=f"env {i} ratio 1")
 
         ax.legend()
         ax.set_title(f"ratio{info}")
+        plt.show()
 
     def show_n_visit(self, info=""):
+        if self.n_class != 2:
+            return
+
         a1 = self.n_visit[..., 0].ravel()
         a2 = self.n_visit[..., 1].ravel()
 
-        _x = np.arange(self.lens[0] + 1)
-        _y = np.arange(self.lens[1] + 1)
+        _x = np.arange(self.limits[0] + 1)
+        _y = np.arange(self.limits[1] + 1)
         _xx, _yy = np.meshgrid(_x, _y, indexing="ij")
         x, y = _xx.ravel(), _yy.ravel()
 
@@ -319,36 +302,44 @@ class Env:
         fig.show()
 
     @classmethod
-    def init_and_train_q(
+    def __init_and_train_q(
         cls,
-        lens,
-        cost,
-        arrival,
-        departure,
-        prob=None,
-        env_type=None,
-        cost_eps=None,
-        save_qs=None,
-        gamma=None,
-        eps=None,
-        decay=None,
-        epoch=None,
-        ls=None,
-        seed=None,
+        limits,
+        costs,
+        arrivals,
+        departures,
+        env_trans_probs,
+        reward_type,
+        save_qs,
+        gamma,
+        eps,
+        decay,
+        epoch,
+        ls,
+        seed,
+        kwargs,
     ):
-        env = cls(lens, cost, arrival, departure, prob, env_type, cost_eps, save_qs)
-        env.train_q(gamma, eps, decay, epoch, ls, seed)
-        return env
+        sys = cls(
+            limits,
+            costs,
+            arrivals,
+            departures,
+            env_trans_probs,
+            reward_type,
+            save_qs,
+            **kwargs,
+        )
+        sys.train_q(gamma, eps, decay, epoch, ls, seed)
+        return sys
 
     @staticmethod
     def get_param(
-        lens,
-        cost,
-        arrival,
-        departure,
-        prob=None,
-        env_type=None,
-        cost_eps=None,
+        limits,
+        costs,
+        arrivals,
+        departures,
+        env_trans_probs=None,
+        reward_type=None,
         save_qs=None,
         gamma=None,
         eps=None,
@@ -356,15 +347,15 @@ class Env:
         epoch=None,
         ls=None,
         seed=None,
+        **kwargs,
     ):
         return (
-            lens,
-            cost,
-            arrival,
-            departure,
-            prob,
-            env_type,
-            cost_eps,
+            limits,
+            costs,
+            arrivals,
+            departures,
+            env_trans_probs,
+            reward_type,
             save_qs,
             gamma,
             eps,
@@ -372,9 +363,10 @@ class Env:
             epoch,
             ls,
             seed,
+            kwargs,
         )
 
     @classmethod
     def train_parallel(cls, parameters):
         with Pool() as p:
-            return p.starmap(cls.init_and_train_q, parameters)
+            return p.starmap(cls.__init_and_train_q, parameters)

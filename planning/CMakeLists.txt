@@ -1,10 +1,10 @@
-add_library(planning INTERFACE include/planning/env.h include/planning/xoshiro.h)
+add_library(planning INTERFACE include/planning/system.h include/planning/xoshiro.h)
 set_target_properties(planning PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(planning INTERFACE ${PROJECT_ROOT_DIR}/planning/include)
 target_include_directories(planning INTERFACE ${DBG_MACRO_INCLUDE_DIRS})
 
 if(SKBUILD)
-  nanobind_add_module(planning_ext NB_STATIC include/planning/env.h include/planning/xoshiro.h src/env.cpp)
+  nanobind_add_module(planning_ext NB_STATIC include/planning/system.h include/planning/xoshiro.h src/system.cpp)
   target_include_directories(planning_ext PUBLIC ${PROJECT_ROOT_DIR}/planning/include)
   target_include_directories(planning_ext PUBLIC ${DBG_MACRO_INCLUDE_DIRS})
 
