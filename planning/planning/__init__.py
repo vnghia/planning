@@ -19,7 +19,7 @@ class System:
         costs,
         arrivals,
         departures,
-        env_trans_probs=None,
+        env_trans_mats=None,
         reward_type=None,
         save_qs=None,
         **kwargs,
@@ -33,13 +33,14 @@ class System:
         self.arrivals = np.array(arrivals).reshape((self.n_class, self.n_env))
         self.departures = np.array(departures).reshape((self.n_class, self.n_env))
 
-        self.env_trans_probs = (
-            np.array(env_trans_probs).reshape((self.n_class, self.n_env, self.n_env))
+        self.env_trans_mats = (
+            np.array(env_trans_mats).reshape((self.n_class, self.n_env, self.n_env))
             if self.n_env > 1
             else np.zeros((self.n_class, 1, 1))
         )
 
-        self.class_dims = tuple(np.array(self.limits) + 1)
+        self.cls_dims = tuple(np.array(self.limits) + 1)
+        self.env_dims = (self.n_env,) * self.n_class
 
         self.reward_type = reward_type or Reward.linear_2
         self.save_qs = bool(save_qs)
@@ -56,7 +57,7 @@ class System:
             self.costs.ravel("F"),
             self.arrivals.ravel("F"),
             self.departures.ravel("F"),
-            self.env_trans_probs.ravel("F"),
+            self.env_trans_mats.ravel("F"),
             self.reward_type,
             **self.kwargs,
         )
@@ -87,7 +88,7 @@ class System:
             costs=self.costs,
             arrivals=self.arrivals,
             departures=self.departures,
-            env_trans_probs=self.env_trans_probs,
+            env_trans_mats=self.env_trans_mats,
             reward_type=self.reward_type,
             save_qs=self.save_qs,
             kwargs=self.kwargs,
@@ -105,7 +106,7 @@ class System:
             data["costs"],
             data["arrivals"],
             data["departures"],
-            data["env_trans_probs"],
+            data["env_trans_mats"],
             data["reward_type"].item(),
             data["save_qs"].item(),
             **data["kwargs"].item(),
@@ -138,7 +139,7 @@ class System:
 
         self.__sys.train_q(gamma, eps, decay, epoch, ls, seed)
 
-        shape = self.class_dims + (self.n_class,)
+        shape = self.cls_dims + (self.n_class,)
         self._q = self.__to_c_major(self.__sys.q, shape)
         self._n_visit = self.__to_c_major(self.__sys.n_visit, shape)
         self._qs = (
@@ -146,14 +147,21 @@ class System:
         )
         self._policy_q = np.argmax(self.q, axis=-1)
 
-    def train_v(self, gamma=None, ls=None):
+    def train_v(self, gamma=None, ls=None, pi_ls=None):
         gamma = gamma or 0.9
         ls = ls or 1000
+        pi_ls = pi_ls or 1000
 
-        self.__sys.train_v(gamma, ls)
+        self.__sys.train_v(gamma, ls, pi_ls)
 
-        self._v = self.__to_c_major(self.__sys.v, self.class_dims)
-        self._policy_v = self.__to_c_major(self.__sys.policy_v, self.class_dims)
+        self._env_probs = (
+            self.__to_c_major(self.__sys.env_probs, self.env_dims)
+            if self.n_env != 1
+            else None
+        )
+
+        self._v = self.__to_c_major(self.__sys.v, self.cls_dims)
+        self._policy_v = self.__to_c_major(self.__sys.policy_v, self.cls_dims)
 
     @property
     def q(self):
@@ -170,6 +178,10 @@ class System:
     @property
     def policy_q(self):
         return self._policy_q
+
+    @property
+    def env_probs(self):
+        return self._env_probs
 
     @property
     def v(self):
@@ -301,7 +313,7 @@ class System:
         costs,
         arrivals,
         departures,
-        env_trans_probs,
+        env_trans_mats,
         reward_type,
         save_qs,
         gamma,
@@ -317,7 +329,7 @@ class System:
             costs,
             arrivals,
             departures,
-            env_trans_probs,
+            env_trans_mats,
             reward_type,
             save_qs,
             **kwargs,
@@ -331,7 +343,7 @@ class System:
         costs,
         arrivals,
         departures,
-        env_trans_probs=None,
+        env_trans_mats=None,
         reward_type=None,
         save_qs=None,
         gamma=None,
@@ -347,7 +359,7 @@ class System:
             costs,
             arrivals,
             departures,
-            env_trans_probs,
+            env_trans_mats,
             reward_type,
             save_qs,
             gamma,

@@ -20,7 +20,7 @@ auto make_system_name() {
          std::to_string(system_type::class_dims[1] - 1);
 }
 
-template <bool condition_t, typename data_type>
+template <typename data_type, bool condition_t = true>
 static constexpr auto make_return_tensor(const auto &v) {
   if constexpr (condition_t) {
     constexpr auto n_dim = 1;
@@ -75,31 +75,31 @@ void make_system(nb::module_ &m) {
   cls.def("__init__", init);
 
   cls.def("train_q", &system_type::train_q)
-      .def_property_readonly(
-          "q",
-          [](const system_type &s) {
-            return make_return_tensor<true, float_type>(s.q());
-          })
-      .def_property_readonly(
-          "n_visit",
-          [](const system_type &s) {
-            return make_return_tensor<true, uint64_t>(s.n_visit());
-          })
+      .def_property_readonly("q",
+                             [](const system_type &s) {
+                               return make_return_tensor<float_type>(s.q());
+                             })
+      .def_property_readonly("n_visit",
+                             [](const system_type &s) {
+                               return make_return_tensor<uint64_t>(s.n_visit());
+                             })
       .def_property_readonly("qs", [](const system_type &s) {
-        return make_return_tensor<system_type::save_qs, float_type>(s.qs());
+        return make_return_tensor<float_type, system_type::save_qs>(s.qs());
       });
 
   cls.def("train_v", &system_type::train_v)
-      .def_property_readonly(
-          "v",
-          [](const system_type &s) {
-            return make_return_tensor<system_type::n_env == 1, float_type>(
-                s.v());
-          })
+      .def_property_readonly("v",
+                             [](const system_type &s) {
+                               return make_return_tensor<float_type>(s.v());
+                             })
       .def_property_readonly("policy_v", [](const system_type &s) {
-        return make_return_tensor<system_type::n_env == 1, index_type>(
-            s.policy_v());
+        return make_return_tensor<index_type>(s.policy_v());
       });
+
+  cls.def_property_readonly("env_probs", [](const system_type &s) {
+    return make_return_tensor<float_type, system_type::n_env != 1>(
+        s.env_probs());
+  });
 }
 
 template <auto system_limits, typename f_t, size_t i_t, index_type... n_env_t>
@@ -140,5 +140,5 @@ NB_MODULE(planning_ext, m) {
       .value("linear_2", Reward::linear_2)
       .value("convex_2", Reward::convex_2);
 
-  make_system_2<double, false, 3>(m);
+  make_system_2<double, false, 3, 7, 10, 15, 20, 25, 30, 40, 50>(m);
 }

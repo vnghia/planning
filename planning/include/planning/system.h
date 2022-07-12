@@ -149,10 +149,15 @@ class System {
       std::array<std::discrete_distribution<index_type>, n_cls_state>;
   using rewards_type = std::array<float_type, n_state>;
 
-  using cls_trans_probs_type =
+  using r_cls_trans_probs_type = std::conditional_t<
+      n_env != 1,
       std::array<std::array<tsl::sparse_map<index_type, sp_vec_type>, n_class>,
-                 n_cls_state>;
-  using env_trans_probs_type = std::array<sp_vec_type, n_env_state>;
+                 n_cls_state>,
+      std::nullptr_t>;
+  using env_trans_probs_type =
+      std::conditional_t<n_env != 1,
+                         Eigen::Matrix<float_type, n_env_state, n_env_state>,
+                         std::nullptr_t>;
 
   using reward_func_type =
       std::function<float_type(const costs_type&, const states_type&)>;
@@ -162,12 +167,16 @@ class System {
   using qs_type =
       std::conditional_t<save_qs, std::vector<float_type>, std::nullptr_t>;
 
-  using v_type =
-      std::conditional_t<n_env == 1, Eigen::Matrix<float_type, n_cls_state, 1>,
+  using cls_trans_probs_type =
+      std::array<std::array<sp_vec_type, n_class>, n_cls_state>;
+  using cls_rewards_type = std::array<float_type, n_cls_state>;
+
+  using env_probs_type =
+      std::conditional_t<n_env != 1, Eigen::Matrix<float_type, n_env_state, 1>,
                          std::nullptr_t>;
-  using policy_v_type =
-      std::conditional_t<n_env == 1, Eigen::Matrix<index_type, n_cls_state, 1>,
-                         std::nullptr_t>;
+
+  using v_type = Eigen::Matrix<float_type, n_cls_state, 1>;
+  using policy_v_type = Eigen::Matrix<index_type, n_cls_state, 1>;
 
   static constexpr auto q_inf_idx = ([]() {
     std::array<std::pair<index_type, index_type>,
@@ -196,7 +205,7 @@ class System {
         trans_probs_(init_trans_probs()),
         trans_dists_(init_trans_dists()),
         action_dists_(init_action_dists()),
-        cls_trans_probs_(init_cls_trans_probs()),
+        r_cls_trans_probs_(init_r_cls_trans_probs()),
         env_trans_probs_(init_env_trans_probs()),
         rewards_(init_rewards(reward_func)) {}
 
@@ -262,29 +271,43 @@ class System {
     }
   }
 
-  void train_v(float_type gamma, uint64_t ls) {
+  void train_v(float_type gamma, uint64_t ls, uint64_t pi_ls) {
     if constexpr (n_env == 1) {
-      static constexpr auto iota_n_cls_state = make_iota<0, n_cls_state>();
+      train_v_impl(trans_probs_, rewards_, gamma, ls);
+    } else {
+      env_probs_.setConstant(static_cast<float_type>(1) / n_env_state);
 
-      v_.fill(0);
-      for (uint64_t i = 0; i < ls; ++i) {
-        const auto v_i = v_;
-        std::for_each(std::execution::par_unseq, iota_n_cls_state.begin(),
-                      iota_n_cls_state.end(),
-                      [gamma, this, &v_i](index_type j) {
-                        update_v_i<false>(gamma, j, v_i);
-                      });
+      for (uint64_t i = 0; i < pi_ls; ++i) {
+        env_probs_ = env_probs_.transpose() * env_trans_probs_;
       }
-      std::for_each(std::execution::par_unseq, iota_n_cls_state.begin(),
-                    iota_n_cls_state.end(), [gamma, this](index_type j) {
-                      update_v_i<true>(gamma, j, v_);
-                    });
+
+      for (index_type i = 0; i < n_cls_state; ++i) {
+        for (index_type a = 0; a < n_class; ++a) {
+          auto& prob_i_a = cls_trans_probs_[i][a];
+          const auto& r_cls_trans_probs_i_a = r_cls_trans_probs_[i][a];
+
+          for (const auto& kv : r_cls_trans_probs_i_a) {
+            const auto& [j, r_env_probs_i_j] = kv;
+            prob_i_a.coeffRef(i) = r_env_probs_i_j.transpose() * env_probs_;
+          }
+        }
+      }
+
+      for (index_type i = 0; i < n_state; ++i) {
+        const auto i_cls = to_cls_state[i];
+        const auto i_env = to_env_state[i];
+        cls_rewards_[i_cls] += rewards_[i] * env_probs_[i_env];
+      }
+
+      train_v_impl(cls_trans_probs_, cls_rewards_, gamma, ls);
     }
   }
 
   const q_type& q() const { return q_; }
   const n_visit_type& n_visit() const { return n_visit_; }
   const qs_type& qs() const { return qs_; }
+
+  const env_probs_type& env_probs() const { return env_probs_; }
 
   const v_type& v() const { return v_; }
   const policy_v_type& policy_v() const { return policy_v_; }
@@ -300,7 +323,7 @@ class System {
   trans_dists_type trans_dists_;
   action_dists_type action_dists_;
 
-  const cls_trans_probs_type cls_trans_probs_;
+  const r_cls_trans_probs_type r_cls_trans_probs_;
   const env_trans_probs_type env_trans_probs_;
 
   const rewards_type rewards_;
@@ -310,6 +333,10 @@ class System {
   q_type q_;
   n_visit_type n_visit_;
   qs_type qs_;
+
+  env_probs_type env_probs_;
+  cls_trans_probs_type cls_trans_probs_;
+  cls_rewards_type cls_rewards_;
 
   v_type v_;
   policy_v_type policy_v_;
@@ -380,6 +407,7 @@ class System {
         }
 
         prob_i_a.coeffRef(i) = dummy_prob;
+        prob_i_a /= normalized_c_;
       }
     }
 
@@ -421,45 +449,54 @@ class System {
     return dists;
   }
 
-  auto init_cls_trans_probs() {
-    cls_trans_probs_type probs;
+  auto init_r_cls_trans_probs() {
+    if constexpr (n_env != 1) {
+      r_cls_trans_probs_type probs;
 
-    for (index_type i = 0; i < n_state; ++i) {
-      const auto i_cls = to_cls_state[i];
-      const auto i_env = to_env_state[i];
+      for (index_type i = 0; i < n_state; ++i) {
+        const auto i_cls = to_cls_state[i];
+        const auto i_env = to_env_state[i];
 
-      for (index_type a = 0; a < n_class; ++a) {
-        const auto& trans_prob = trans_probs_[i][a];
+        for (index_type a = 0; a < n_class; ++a) {
+          const auto& trans_prob = trans_probs_[i][a];
 
-        for (sp_vec_it it(trans_prob); it; ++it) {
-          const auto j = it.index();
-          const auto j_cls = to_cls_state[j];
-          const auto prob = it.value();
-          probs[j_cls][a].try_emplace(i_cls).first.value().coeffRef(i_env) +=
-              prob;
+          for (sp_vec_it it(trans_prob); it; ++it) {
+            const auto j = it.index();
+            const auto j_cls = to_cls_state[j];
+            const auto prob = it.value();
+            probs[j_cls][a].try_emplace(i_cls).first.value().coeffRef(i_env) +=
+                prob;
+          }
         }
       }
-    }
 
-    return probs;
+      return probs;
+    } else {
+      return nullptr;
+    }
   }
 
   auto init_env_trans_probs() {
-    env_trans_probs_type probs;
+    if constexpr (n_env != 1) {
+      env_trans_probs_type probs;
+      probs.setZero();
 
-    for (index_type i = 0; i < n_env_state; ++i) {
-      const auto& trans_prob = trans_probs_[i * n_cls_state][0];
+      for (index_type i = 0; i < n_env_state; ++i) {
+        const auto& trans_prob = trans_probs_[i * n_cls_state][0];
 
-      for (sp_vec_it it(trans_prob); it; ++it) {
-        const auto j = it.index();
-        const auto j_env = to_env_state[j];
-        const auto prob = it.value();
+        for (sp_vec_it it(trans_prob); it; ++it) {
+          const auto j = it.index();
+          const auto j_env = to_env_state[j];
+          const auto prob = it.value();
 
-        probs[i].coeffRef(j_env) += prob;
+          probs(i, j_env) += prob;
+        }
       }
-    }
 
-    return probs;
+      return probs;
+    } else {
+      return nullptr;
+    }
   }
 
   auto init_rewards(const reward_func_type& reward_func) {
@@ -472,14 +509,39 @@ class System {
     return rewards;
   }
 
+  void train_v_impl(const cls_trans_probs_type& cls_trans_probs,
+                    const cls_rewards_type& cls_rewards, float_type gamma,
+                    uint64_t ls) {
+    static constexpr auto iota_n_cls_state = make_iota<0, n_cls_state>();
+
+    v_.fill(0);
+    for (uint64_t i = 0; i < ls; ++i) {
+      const auto v_i = v_;
+      std::for_each(
+          std::execution::par_unseq, iota_n_cls_state.begin(),
+          iota_n_cls_state.end(),
+          [&cls_trans_probs, &cls_rewards, gamma, this, &v_i](index_type j) {
+            update_v_i<false>(cls_trans_probs, cls_rewards, gamma, j, v_i);
+          });
+    }
+    std::for_each(std::execution::par_unseq, iota_n_cls_state.begin(),
+                  iota_n_cls_state.end(),
+                  [&cls_trans_probs, &cls_rewards, gamma, this](index_type j) {
+                    update_v_i<true>(cls_trans_probs, cls_rewards, gamma, j,
+                                     v_);
+                  });
+  }
+
   template <bool update_policy>
-  void update_v_i(float_type gamma, index_type j, const v_type& v_i) {
+  void update_v_i(const cls_trans_probs_type& cls_trans_probs,
+                  const cls_rewards_type& cls_rewards, float_type gamma,
+                  index_type j, const v_type& v_i) {
     float_type max_v = -inf_v;
     index_type max_a = 0;
 
     for (index_type a = 0; a < n_class; ++a) {
-      float_type val_v = rewards_[j];
-      const auto& probs = trans_probs_[j][a];
+      float_type val_v = cls_rewards[j];
+      const auto& probs = cls_trans_probs[j][a];
 
       if (!probs.nonZeros()) continue;
       val_v += gamma * probs.transpose() * v_i;
