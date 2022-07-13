@@ -124,20 +124,16 @@ class System:
     def train_q(
         self,
         gamma=None,
-        eps=None,
-        decay=None,
-        epoch=None,
+        greedy_eps=None,
         ls=None,
         seed=None,
     ):
         gamma = gamma or 0.9
-        eps = eps or 0.8
-        decay = decay or 0.5
-        epoch = epoch or 1
+        greedy_eps = greedy_eps or 0.8
         ls = ls or 100000000
         seed = seed or 42
 
-        self.__sys.train_q(gamma, eps, decay, epoch, ls, seed)
+        self.__sys.train_q(gamma, greedy_eps, ls, seed)
 
         shape = self.cls_dims + (self.n_class,)
         self._q = self.__to_c_major(self.__sys.q, shape)
@@ -317,9 +313,7 @@ class System:
         reward_type,
         save_qs,
         gamma,
-        eps,
-        decay,
-        epoch,
+        greedy_eps,
         ls,
         seed,
         kwargs,
@@ -334,7 +328,7 @@ class System:
             save_qs,
             **kwargs,
         )
-        sys.train_q(gamma, eps, decay, epoch, ls, seed)
+        sys.train_q(gamma, greedy_eps, ls, seed)
         return sys
 
     @staticmethod
@@ -347,9 +341,7 @@ class System:
         reward_type=None,
         save_qs=None,
         gamma=None,
-        eps=None,
-        decay=None,
-        epoch=None,
+        greedy_eps=None,
         ls=None,
         seed=None,
         **kwargs,
@@ -363,9 +355,7 @@ class System:
             reward_type,
             save_qs,
             gamma,
-            eps,
-            decay,
-            epoch,
+            greedy_eps,
             ls,
             seed,
             kwargs,

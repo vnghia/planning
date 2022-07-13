@@ -20,6 +20,8 @@
 
 using index_type = Eigen::Index;
 
+XoshiroCpp::Xoshiro256Plus rng;
+
 template <index_type begin, index_type end>
 static constexpr auto make_iota() {
   std::array<index_type, end - begin> res;
@@ -198,16 +200,16 @@ class System {
          const reward_func_type& reward_func,
          const std::optional<float_type>& normalized_c = std::nullopt)
       : costs(costs),
-        arrivals_(arrivals),
-        departures_(departures),
-        env_trans_mats_(init_env_trans_mats(env_trans_mats)),
-        normalized_c_(init_normalized_c(normalized_c)),
-        trans_probs_(init_trans_probs()),
+        arrivals(arrivals),
+        departures(departures),
+        env_trans_mats(init_env_trans_mats(env_trans_mats)),
+        normalized_c(init_normalized_c(normalized_c)),
+        trans_probs(init_trans_probs()),
         trans_dists_(init_trans_dists()),
         action_dists_(init_action_dists()),
-        r_cls_trans_probs_(init_r_cls_trans_probs()),
-        env_trans_probs_(init_env_trans_probs()),
-        rewards_(init_rewards(reward_func)) {}
+        r_cls_trans_probs(init_r_cls_trans_probs()),
+        env_trans_probs(init_env_trans_probs()),
+        rewards(init_rewards(reward_func)) {}
 
   void reset_q() {
     q_.setZero();
@@ -221,70 +223,68 @@ class System {
   }
 
   void reset_q_epoch(uint64_t seed) {
-    rng_ = decltype(rng_)(seed);
+    rng = decltype(rng)(seed);
     state_ = 0;
   }
 
   void step(index_type action) {
-    auto next_state_idx = trans_dists_[state_][action](rng_);
-    state_ = trans_probs_[state_][action].innerIndexPtr()[next_state_idx];
+    auto next_state_idx = trans_dists_[state_][action](rng);
+    state_ = trans_probs[state_][action].innerIndexPtr()[next_state_idx];
   }
 
-  void train_q(float_type gamma, float_type eps, float_type decay, size_t epoch,
-               uint64_t ls, uint64_t seed) {
+  void train_q(float_type gamma, float_type greedy_eps, uint64_t ls,
+               uint64_t seed) {
     reset_q();
 
     if constexpr (save_qs) {
-      qs_.resize(epoch * ls * q_.size());
+      qs_.resize(ls * q_.size());
     }
 
-    for (index_type i = 0; i < epoch; ++i) {
-      reset_q_epoch(seed);
+    reset_q_epoch(seed);
 
-      for (index_type j = 0; j < ls; ++j) {
-        const auto state = state_;
-        const auto cls_state = to_cls_state[state];
+    for (index_type i = 0; i < ls; ++i) {
+      const auto state = state_;
+      const auto cls_state = to_cls_state[state];
 
-        index_type a;
-        if (greedy_dis_(rng_) < eps) {
-          a = action_dists_[cls_state](rng_);
-        } else {
-          q_(cls_state, Eigen::all).maxCoeff(&a);
-        }
+      index_type a;
+      if (greedy_dis_(rng) < greedy_eps) {
+        a = action_dists_[cls_state](rng);
+      } else {
+        q_(cls_state, Eigen::all).maxCoeff(&a);
+      }
 
-        step(a);
-        const auto next_state = state_;
-        const auto next_cls_state = to_cls_state[next_state];
+      step(a);
+      const auto next_state = state_;
+      const auto next_cls_state = to_cls_state[next_state];
 
-        const auto next_q = q_(next_cls_state, Eigen::all).maxCoeff();
-        const auto reward = rewards_[state];
+      const auto next_q = q_(next_cls_state, Eigen::all).maxCoeff();
+      const auto reward = rewards[state];
 
-        q_(cls_state, a) +=
-            (static_cast<float_type>(1) / ++n_visit_(cls_state, a)) *
-            (reward + gamma * next_q - q_(cls_state, a));
+      q_(cls_state, a) +=
+          (static_cast<float_type>(1) / ++n_visit_(cls_state, a)) *
+          (reward + gamma * next_q - q_(cls_state, a));
 
-        if constexpr (save_qs) {
-          std::copy(q_.data(), q_.data() + q_.size(),
-                    qs_.begin() + (i * ls + j) * q_.size());
-        }
+      if constexpr (save_qs) {
+        std::copy(q_.data(), q_.data() + q_.size(),
+                  qs_.begin() + i * q_.size());
       }
     }
   }
 
   void train_v(float_type gamma, uint64_t ls, uint64_t pi_ls) {
     if constexpr (n_env == 1) {
-      train_v_impl(trans_probs_, rewards_, gamma, ls);
+      train_v_impl(trans_probs, rewards, gamma, ls);
     } else {
       env_probs_.setConstant(static_cast<float_type>(1) / n_env_state);
 
       for (uint64_t i = 0; i < pi_ls; ++i) {
-        env_probs_ = env_probs_.transpose() * env_trans_probs_;
+        env_probs_ = env_probs_.transpose() * env_trans_probs;
       }
 
       for (index_type i = 0; i < n_cls_state; ++i) {
         for (index_type a = 0; a < n_class; ++a) {
           auto& prob_i_a = cls_trans_probs_[i][a];
-          const auto& r_cls_trans_probs_i_a = r_cls_trans_probs_[i][a];
+          const auto& r_cls_trans_probs_i_a = r_cls_trans_probs[i][a];
 
           for (const auto& kv : r_cls_trans_probs_i_a) {
             const auto& [j, r_env_probs_i_j] = kv;
@@ -296,7 +296,7 @@ class System {
       for (index_type i = 0; i < n_state; ++i) {
         const auto i_cls = to_cls_state[i];
         const auto i_env = to_env_state[i];
-        cls_rewards_[i_cls] += rewards_[i] * env_probs_[i_env];
+        cls_rewards_[i_cls] += rewards[i] * env_probs_[i_env];
       }
 
       train_v_impl(cls_trans_probs_, cls_rewards_, gamma, ls);
@@ -312,21 +312,22 @@ class System {
   const v_type& v() const { return v_; }
   const policy_v_type& policy_v() const { return policy_v_; }
 
- private:
   const costs_type costs;
-  const arrivals_type arrivals_;
-  const departures_type departures_;
-  const env_trans_mats_type env_trans_mats_;
-  const float_type normalized_c_;
+  const arrivals_type arrivals;
+  const departures_type departures;
+  const env_trans_mats_type env_trans_mats;
+  const float_type normalized_c;
 
-  const trans_probs_type trans_probs_;
+  const trans_probs_type trans_probs;
+
+  const r_cls_trans_probs_type r_cls_trans_probs;
+  const env_trans_probs_type env_trans_probs;
+
+  const rewards_type rewards;
+
+ private:
   trans_dists_type trans_dists_;
   action_dists_type action_dists_;
-
-  const r_cls_trans_probs_type r_cls_trans_probs_;
-  const env_trans_probs_type env_trans_probs_;
-
-  const rewards_type rewards_;
 
   index_type state_;
 
@@ -335,13 +336,13 @@ class System {
   qs_type qs_;
 
   env_probs_type env_probs_;
-  cls_trans_probs_type cls_trans_probs_;
-  cls_rewards_type cls_rewards_;
+  std::conditional_t<n_env != 1, cls_trans_probs_type, std::nullptr_t>
+      cls_trans_probs_;
+  std::conditional_t<n_env != 1, cls_rewards_type, std::nullptr_t> cls_rewards_;
 
   v_type v_;
   policy_v_type policy_v_;
 
-  XoshiroCpp::Xoshiro256Plus rng_;
   std::uniform_real_distribution<float_type> greedy_dis_;
 
   auto init_env_trans_mats(const float_type* env_trans_mats) {
@@ -364,8 +365,8 @@ class System {
     static const Eigen::array<index_type, 1> max_dims({1});
 
     return Eigen::Tensor<double, 0>(
-        arrivals_.rowwise().maxCoeff().sum() + departures_.maxCoeff() +
-        env_trans_mats_.sum(sum_dims).maximum(max_dims).sum())(0);
+        arrivals.rowwise().maxCoeff().sum() + departures.maxCoeff() +
+        env_trans_mats.sum(sum_dims).maximum(max_dims).sum())(0);
   }
 
   auto init_trans_probs() {
@@ -377,7 +378,7 @@ class System {
       for (index_type a = 0; a < n_class; ++a) {
         if ((to_cls_state[i] && !s_i[a]) || (!to_cls_state[i] && a)) continue;
 
-        float_type dummy_prob = normalized_c_;
+        float_type dummy_prob = normalized_c;
         auto& prob_i_a = probs[i][a];
 
         for (index_type j = 0; j < n_state; ++j) {
@@ -393,11 +394,11 @@ class System {
             const auto idx = next_to.value();
 
             if (idx >= n_class) {
-              prob = env_trans_mats_(idx - n_class, s_i[idx], s_j[idx]);
+              prob = env_trans_mats(idx - n_class, s_i[idx], s_j[idx]);
             } else if (s_i[idx] < s_j[idx]) {
-              prob = arrivals_(idx, s_i[idx + n_class]);
+              prob = arrivals(idx, s_i[idx + n_class]);
             } else {
-              prob = departures_(idx, s_i[idx + n_class]);
+              prob = departures(idx, s_i[idx + n_class]);
             }
 
             prob_i_a.insertBack(j) = prob;
@@ -407,7 +408,7 @@ class System {
         }
 
         prob_i_a.coeffRef(i) = dummy_prob;
-        prob_i_a /= normalized_c_;
+        prob_i_a /= normalized_c;
       }
     }
 
@@ -419,7 +420,7 @@ class System {
 
     for (index_type i = 0; i < n_state; ++i) {
       for (index_type a = 0; a < n_class; ++a) {
-        const auto& probs = trans_probs_[i][a];
+        const auto& probs = trans_probs[i][a];
         const auto n_non_zero = probs.nonZeros();
         if (n_non_zero) {
           dists[i][a] = std::discrete_distribution<index_type>(
@@ -437,7 +438,7 @@ class System {
       std::array<index_type, n_class> possible_actions{};
 
       for (index_type j = 0; j < n_class; ++j) {
-        if (trans_probs_[i][j].nonZeros()) {
+        if (trans_probs[i][j].nonZeros()) {
           possible_actions[j] = 1;
         }
       }
@@ -458,7 +459,7 @@ class System {
         const auto i_env = to_env_state[i];
 
         for (index_type a = 0; a < n_class; ++a) {
-          const auto& trans_prob = trans_probs_[i][a];
+          const auto& trans_prob = trans_probs[i][a];
 
           for (sp_vec_it it(trans_prob); it; ++it) {
             const auto j = it.index();
@@ -482,7 +483,7 @@ class System {
       probs.setZero();
 
       for (index_type i = 0; i < n_env_state; ++i) {
-        const auto& trans_prob = trans_probs_[i * n_cls_state][0];
+        const auto& trans_prob = trans_probs[i * n_cls_state][0];
 
         for (sp_vec_it it(trans_prob); it; ++it) {
           const auto j = it.index();
