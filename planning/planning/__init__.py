@@ -155,9 +155,27 @@ class System:
             if self.n_env != 1
             else None
         )
+        self._cls_trans_probs = self.__sys.cls_trans_probs if self.n_env != 1 else None
+        self._cls_rewards = self.__sys.cls_rewards if self.n_env != 1 else None
 
         self._v = self.__to_c_major(self.__sys.v, self.cls_dims)
         self._policy_v = self.__to_c_major(self.__sys.policy_v, self.cls_dims)
+
+    @property
+    def states(self):
+        return self.__sys.states
+
+    @property
+    def cls_states(self):
+        return self.__sys.cls_states
+
+    @property
+    def trans_probs(self):
+        return self.__sys.trans_probs
+
+    @property
+    def rewards(self):
+        return self.__sys.rewards
 
     @property
     def q(self):
@@ -178,6 +196,14 @@ class System:
     @property
     def env_probs(self):
         return self._env_probs
+
+    @property
+    def cls_trans_probs(self):
+        return self._cls_trans_probs
+
+    @property
+    def cls_rewards(self):
+        return self._cls_rewards
 
     @property
     def v(self):

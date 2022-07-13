@@ -3,14 +3,21 @@
 #include <array>
 #include <optional>
 #include <string>
+#include <utility>
 
+#include "Eigen/SparseCore"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/pair.h"
 #include "nanobind/stl/vector.h"
 #include "nanobind/tensor.h"
 
 namespace nb = nanobind;
 
 using namespace nb::literals;
+
+template <typename Type, size_t N>
+struct nb::detail::type_caster<std::array<Type, N>>
+    : nb::detail::list_caster<std::array<Type, N>, Type> {};
 
 template <typename system_type>
 auto make_system_name() {
@@ -20,14 +27,40 @@ auto make_system_name() {
          std::to_string(system_type::class_dims[1] - 1);
 }
 
+template <typename data_type>
+static constexpr auto make_return_tensor(const data_type *data, size_t size) {
+  constexpr auto n_dim = 1;
+  const size_t dims[] = {size};
+  return nb::tensor<nb::numpy, data_type>(const_cast<data_type *>(data), n_dim,
+                                          dims);
+}
+
 template <typename data_type, bool condition_t = true>
 static constexpr auto make_return_tensor(const auto &v) {
   if constexpr (condition_t) {
-    constexpr auto n_dim = 1;
-    const size_t dims[] = {static_cast<size_t>(v.size())};
-    return nb::tensor<nb::numpy, data_type>(const_cast<data_type *>(v.data()),
-                                            n_dim, dims);
+    return make_return_tensor<data_type>(v.data(),
+                                         static_cast<size_t>(v.size()));
   }
+}
+
+template <typename float_type>
+void make_sparse(nb::module_ &m) {
+  using sp_vec_type = Eigen::SparseVector<float_type>;
+  auto cls = nb::class_<sp_vec_type>(m, "sp_vec_type");
+  cls.def("__len__", [](const sp_vec_type &v) { return v.nonZeros(); })
+      .def("__getitem__",
+           [](const sp_vec_type &v, size_t i) {
+             return std::make_pair(v.innerIndexPtr()[i], v.valuePtr()[i]);
+           })
+      .def_property_readonly(
+          "keys",
+          [](const sp_vec_type &v) {
+            return make_return_tensor<typename sp_vec_type::StorageIndex>(
+                v.innerIndexPtr(), v.nonZeros());
+          })
+      .def_property_readonly("values", [](const sp_vec_type &v) {
+        return make_return_tensor<float_type>(v.valuePtr(), v.nonZeros());
+      });
 }
 
 template <typename system_type>
@@ -38,6 +71,7 @@ void make_system(nb::module_ &m) {
   static const auto name = make_system_name<system_type>();
 
   auto cls = nb::class_<system_type>(m, name.c_str());
+  using py_type = decltype(cls);
 
   static constexpr auto init = [](system_type *s, param_type costs,
                                   param_type arrivals, param_type departures,
@@ -74,6 +108,24 @@ void make_system(nb::module_ &m) {
 
   cls.def("__init__", init);
 
+  cls.def_property_readonly_static(
+         "states", [](const py_type &) { return system_type::states; })
+      .def_property_readonly_static(
+          "cls_states", [](const py_type &) { return system_type::cls_states; })
+      .def_property_readonly_static("env_states", [](const py_type &) {
+        return system_type::env_states;
+      });
+
+  cls.def_property_readonly(
+         "trans_probs",
+         [](const system_type &s)
+             -> const typename system_type::trans_probs_type & {
+           return s.trans_probs;
+         })
+      .def_property_readonly("rewards", [](const system_type &s) {
+        return make_return_tensor<float_type>(s.rewards);
+      });
+
   cls.def("train_q", &system_type::train_q)
       .def_property_readonly("q",
                              [](const system_type &s) {
@@ -87,19 +139,32 @@ void make_system(nb::module_ &m) {
         return make_return_tensor<float_type, system_type::save_qs>(s.qs());
       });
 
-  cls.def("train_v", &system_type::train_v)
-      .def_property_readonly("v",
-                             [](const system_type &s) {
-                               return make_return_tensor<float_type>(s.v());
-                             })
+  cls.def("train_v", &system_type::train_v);
+
+  cls.def_property_readonly(
+         "env_probs",
+         [](const system_type &s) {
+           return make_return_tensor<float_type, system_type::n_env != 1>(
+               s.env_probs());
+         })
+      .def_property_readonly(
+          "cls_trans_probs",
+          [](const system_type &s)
+              -> const typename system_type::cls_trans_probs_type & {
+            return s.cls_trans_probs();
+          })
+      .def_property_readonly("cls_rewards", [](const system_type &s) {
+        return make_return_tensor<float_type, system_type::n_env != 1>(
+            s.cls_rewards());
+      });
+
+  cls.def_property_readonly("v",
+                            [](const system_type &s) {
+                              return make_return_tensor<float_type>(s.v());
+                            })
       .def_property_readonly("policy_v", [](const system_type &s) {
         return make_return_tensor<index_type>(s.policy_v());
       });
-
-  cls.def_property_readonly("env_probs", [](const system_type &s) {
-    return make_return_tensor<float_type, system_type::n_env != 1>(
-        s.env_probs());
-  });
 }
 
 template <auto system_limits, typename f_t, size_t i_t, index_type... n_env_t>
@@ -140,5 +205,8 @@ NB_MODULE(planning_ext, m) {
       .value("linear_2", Reward::linear_2)
       .value("convex_2", Reward::convex_2);
 
-  make_system_2<double, false, 3, 7, 10, 15, 20, 25, 30, 40, 50>(m);
+  using f_t = double;
+
+  make_sparse<f_t>(m);
+  make_system_2<f_t, false, 3, 7, 10, 15, 20, 25, 30, 40, 50>(m);
 }

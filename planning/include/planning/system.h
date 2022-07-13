@@ -169,9 +169,14 @@ class System {
   using qs_type =
       std::conditional_t<save_qs, std::vector<float_type>, std::nullptr_t>;
 
-  using cls_trans_probs_type =
+  using cls_trans_probs_v_type =
       std::array<std::array<sp_vec_type, n_class>, n_cls_state>;
-  using cls_rewards_type = std::array<float_type, n_cls_state>;
+  using cls_rewards_v_type = std::array<float_type, n_cls_state>;
+
+  using cls_trans_probs_type =
+      std::conditional_t<n_env != 1, cls_trans_probs_v_type, std::nullptr_t>;
+  using cls_rewards_type =
+      std::conditional_t<n_env != 1, cls_rewards_v_type, std::nullptr_t>;
 
   using env_probs_type =
       std::conditional_t<n_env != 1, Eigen::Matrix<float_type, n_env_state, 1>,
@@ -309,6 +314,11 @@ class System {
 
   const env_probs_type& env_probs() const { return env_probs_; }
 
+  const cls_trans_probs_type& cls_trans_probs() const {
+    return cls_trans_probs_;
+  }
+  const cls_rewards_type& cls_rewards() const { return cls_rewards_; }
+
   const v_type& v() const { return v_; }
   const policy_v_type& policy_v() const { return policy_v_; }
 
@@ -336,9 +346,8 @@ class System {
   qs_type qs_;
 
   env_probs_type env_probs_;
-  std::conditional_t<n_env != 1, cls_trans_probs_type, std::nullptr_t>
-      cls_trans_probs_;
-  std::conditional_t<n_env != 1, cls_rewards_type, std::nullptr_t> cls_rewards_;
+  cls_trans_probs_type cls_trans_probs_;
+  cls_rewards_type cls_rewards_;
 
   v_type v_;
   policy_v_type policy_v_;
@@ -510,8 +519,8 @@ class System {
     return rewards;
   }
 
-  void train_v_impl(const cls_trans_probs_type& cls_trans_probs,
-                    const cls_rewards_type& cls_rewards, float_type gamma,
+  void train_v_impl(const cls_trans_probs_v_type& cls_trans_probs,
+                    const cls_rewards_v_type& cls_rewards, float_type gamma,
                     uint64_t ls) {
     static constexpr auto iota_n_cls_state = make_iota<0, n_cls_state>();
 
@@ -534,8 +543,8 @@ class System {
   }
 
   template <bool update_policy>
-  void update_v_i(const cls_trans_probs_type& cls_trans_probs,
-                  const cls_rewards_type& cls_rewards, float_type gamma,
+  void update_v_i(const cls_trans_probs_v_type& cls_trans_probs,
+                  const cls_rewards_v_type& cls_rewards, float_type gamma,
                   index_type j, const v_type& v_i) {
     float_type max_v = -inf_v;
     index_type max_a = 0;
