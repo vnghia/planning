@@ -77,6 +77,12 @@ class System:
                 + (self.departures[:, i]).tolist()
             )
 
+        self._env_trans_probs = (
+            self.__to_c_major(self.__sys.env_trans_probs, (self.n_env**2,) * 2)
+            if self.n_env != 1
+            else None
+        )
+
     def __repr__(self):
         return self.cpp_type
 
@@ -192,6 +198,14 @@ class System:
     @property
     def policy_q(self):
         return self._policy_q
+
+    @property
+    def r_cls_trans_probs(self):
+        return self.__sys.r_cls_trans_probs
+
+    @property
+    def env_trans_probs(self):
+        return self._env_trans_probs
 
     @property
     def env_probs(self):

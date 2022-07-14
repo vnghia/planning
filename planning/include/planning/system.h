@@ -286,14 +286,13 @@ class System {
         env_probs_ = env_probs_.transpose() * env_trans_probs;
       }
 
-      for (index_type i = 0; i < n_cls_state; ++i) {
+      for (index_type j = 0; j < n_cls_state; ++j) {
         for (index_type a = 0; a < n_class; ++a) {
-          auto& prob_i_a = cls_trans_probs_[i][a];
-          const auto& r_cls_trans_probs_i_a = r_cls_trans_probs[i][a];
+          const auto& r_cls_trans_probs_j_a = r_cls_trans_probs[j][a];
 
-          for (const auto& kv : r_cls_trans_probs_i_a) {
-            const auto& [j, r_env_probs_i_j] = kv;
-            prob_i_a.coeffRef(i) = r_env_probs_i_j.transpose() * env_probs_;
+          for (const auto& [i, r_env_probs_j_i] : r_cls_trans_probs_j_a) {
+            cls_trans_probs_[i][a].coeffRef(j) =
+                r_env_probs_j_i.transpose() * env_probs_;
           }
         }
       }

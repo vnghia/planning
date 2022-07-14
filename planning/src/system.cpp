@@ -63,6 +63,38 @@ void make_sparse(nb::module_ &m) {
       });
 }
 
+template <typename key_type, typename value_type>
+void make_tls_sparse(nb::module_ &m) {
+  using sp_map_type = tsl::sparse_map<key_type, value_type>;
+  auto cls = nb::class_<sp_map_type>(m, "sp_map_type");
+  cls.def("__len__", [](const sp_map_type &map) { return map.size(); })
+      .def(
+          "__getitem__",
+          [](sp_map_type &map, const key_type &k) -> const value_type & {
+            return map[k];
+          },
+          nb::rv_policy::reference_internal)
+      .def("keys",
+           [](sp_map_type &map) {
+             std::vector<key_type> keys;
+             for (const auto &[k, _] : map) {
+               keys.push_back(k);
+             }
+             return keys;
+           })
+      .def("values",
+           [](sp_map_type &map) {
+             std::vector<value_type> values;
+             for (const auto &[_, v] : map) {
+               values.push_back(v);
+             }
+             return values;
+           })
+      .def("items", [](const sp_map_type &map) {
+        return std::vector{map.begin(), map.end()};
+      });
+}
+
 template <typename system_type>
 void make_system(nb::module_ &m) {
   using float_type = typename system_type::float_type;
@@ -139,6 +171,17 @@ void make_system(nb::module_ &m) {
         return make_return_tensor<float_type, system_type::save_qs>(s.qs());
       });
 
+  cls.def_property_readonly(
+         "r_cls_trans_probs",
+         [](const system_type &s)
+             -> const typename system_type::r_cls_trans_probs_type & {
+           return s.r_cls_trans_probs;
+         })
+      .def_property_readonly("env_trans_probs", [](const system_type &s) {
+        return make_return_tensor<float_type, system_type::n_env != 1>(
+            s.env_trans_probs);
+      });
+
   cls.def("train_v", &system_type::train_v);
 
   cls.def_property_readonly(
@@ -206,7 +249,9 @@ NB_MODULE(planning_ext, m) {
       .value("convex_2", Reward::convex_2);
 
   using f_t = double;
+  using sp_vec_type = Eigen::SparseVector<f_t>;
 
   make_sparse<f_t>(m);
+  make_tls_sparse<index_type, sp_vec_type>(m);
   make_system_2<f_t, false, 3, 7, 10, 15, 20, 25, 30, 40, 50>(m);
 }
