@@ -63,35 +63,33 @@ void make_sparse(nb::module_ &m) {
       });
 }
 
-template <typename key_type, typename value_type>
-void make_tls_sparse(nb::module_ &m) {
-  using sp_map_type = tsl::sparse_map<key_type, value_type>;
-  auto cls = nb::class_<sp_map_type>(m, "sp_map_type");
-  cls.def("__len__", [](const sp_map_type &map) { return map.size(); })
-      .def(
-          "__getitem__",
-          [](sp_map_type &map, const key_type &k) -> const value_type & {
-            return map[k];
-          },
-          nb::rv_policy::reference_internal)
-      .def("keys",
-           [](sp_map_type &map) {
-             std::vector<key_type> keys;
-             for (const auto &[k, _] : map) {
-               keys.push_back(k);
-             }
-             return keys;
+template <typename float_type, size_t n_class_t, size_t n_env_t>
+void make_probs_map(nb::module_ &m) {
+  static constexpr auto n_env_state = ([]() {
+    size_t res = 1;
+    for (size_t i = 0; i < n_class_t; ++i) {
+      res *= n_env_t;
+    }
+    return res;
+  })();
+
+  using probs_map_type =
+      tsl::sparse_map<index_type, Eigen::Matrix<float_type, 1, n_env_state>>;
+
+  nb::class_<probs_map_type>(
+      m,
+      ("state_cls_trans_probs_map_type_" + std::to_string(n_env_state)).c_str())
+      .def("__len__", [](const probs_map_type &map) { return map.size(); })
+      .def("__getitem__",
+           [](probs_map_type &map, index_type k) {
+             return make_return_tensor<float_type>(map[k]);
            })
-      .def("values",
-           [](sp_map_type &map) {
-             std::vector<value_type> values;
-             for (const auto &[_, v] : map) {
-               values.push_back(v);
-             }
-             return values;
-           })
-      .def("items", [](const sp_map_type &map) {
-        return std::vector{map.begin(), map.end()};
+      .def("keys", [](probs_map_type &map) {
+        std::vector<index_type> keys;
+        for (const auto &[k, _] : map) {
+          keys.push_back(k);
+        }
+        return keys;
       });
 }
 
@@ -104,6 +102,8 @@ void make_system(nb::module_ &m) {
 
   auto cls = nb::class_<system_type>(m, name.c_str());
   using py_type = decltype(cls);
+
+  /* --------------------------------- init --------------------------------- */
 
   static constexpr auto init = [](system_type *s, param_type costs,
                                   param_type arrivals, param_type departures,
@@ -140,6 +140,8 @@ void make_system(nb::module_ &m) {
 
   cls.def("__init__", init);
 
+  /* ------------------------- constexpr state types ------------------------ */
+
   cls.def_property_readonly_static(
          "states", [](const py_type &) { return system_type::states; })
       .def_property_readonly_static(
@@ -148,71 +150,92 @@ void make_system(nb::module_ &m) {
         return system_type::env_states;
       });
 
-  cls.def_property_readonly(
-         "trans_probs",
-         [](const system_type &s)
-             -> const typename system_type::trans_probs_type & {
-           return s.trans_probs;
-         })
-      .def_property_readonly("rewards", [](const system_type &s) {
-        return make_return_tensor<float_type>(s.rewards);
-      });
-
-  cls.def("train_q", &system_type::train_q)
-      .def_property_readonly("q",
-                             [](const system_type &s) {
-                               return make_return_tensor<float_type>(s.q());
-                             })
-      .def_property_readonly("n_visit",
-                             [](const system_type &s) {
-                               return make_return_tensor<uint64_t>(s.n_visit());
-                             })
-      .def_property_readonly("qs", [](const system_type &s) {
-        return make_return_tensor<float_type, system_type::save_qs>(s.qs());
-      });
+  /* -------------------- variables - system transitions -------------------- */
 
   cls.def_property_readonly(
-         "r_cls_trans_probs",
+      "trans_probs",
+      [](const system_type &s)
+          -> const typename system_type::trans_probs_type & {
+        return s.trans_probs;
+      });
+
+  /* -------------------------- variables - rewards ------------------------- */
+
+  cls.def_property_readonly("rewards", [](const system_type &s) {
+    return make_return_tensor<float_type>(s.rewards);
+  });
+
+  /* ----------- variables - additional precomputed probabilities ----------- */
+
+  cls.def_property_readonly(
+         "state_cls_trans_probs",
          [](const system_type &s)
-             -> const typename system_type::r_cls_trans_probs_type & {
-           return s.r_cls_trans_probs;
+             -> const typename system_type::state_cls_trans_probs_type & {
+           return s.state_cls_trans_probs;
          })
       .def_property_readonly("env_trans_probs", [](const system_type &s) {
         return make_return_tensor<float_type, system_type::n_env != 1>(
             s.env_trans_probs);
       });
 
-  cls.def("train_v", &system_type::train_v);
+  /* ------------------------------ q learning ------------------------------ */
 
-  cls.def_property_readonly(
-         "env_probs",
-         [](const system_type &s) {
-           return make_return_tensor<float_type, system_type::n_env != 1>(
-               s.env_probs());
-         })
+  cls.def("train_q", &system_type::train_q)
+      .def_property_readonly("q",
+                             [](const system_type &s) {
+                               return make_return_tensor<float_type>(s.q());
+                             })
       .def_property_readonly(
-          "cls_trans_probs",
-          [](const system_type &s)
-              -> const typename system_type::cls_trans_probs_type & {
-            return s.cls_trans_probs();
+          "q_n_visit",
+          [](const system_type &s) {
+            return make_return_tensor<uint64_t>(s.q_n_visit());
           })
-      .def_property_readonly("cls_rewards", [](const system_type &s) {
-        return make_return_tensor<float_type, system_type::n_env != 1>(
-            s.cls_rewards());
+      .def_property_readonly(
+          "q_policy",
+          [](const system_type &s) {
+            return make_return_tensor<index_type>(s.q_policy());
+          })
+      .def_property_readonly("qs", [](const system_type &s) {
+        return make_return_tensor<float_type, system_type::save_qs>(s.qs());
+      });
+  /* ---------------------------- value iteration --------------------------- */
+
+  cls.def("train_v_s", &system_type::train_v_s)
+      .def_property_readonly("v",
+                             [](const system_type &s) {
+                               return make_return_tensor<float_type>(s.v());
+                             })
+      .def_property_readonly("v_policy", [](const system_type &s) {
+        return make_return_tensor<index_type>(s.v_policy());
       });
 
-  cls.def_property_readonly("v",
-                            [](const system_type &s) {
-                              return make_return_tensor<float_type>(s.v());
-                            })
-      .def_property_readonly("policy_v", [](const system_type &s) {
-        return make_return_tensor<index_type>(s.policy_v());
+  /* --------------------------------- tilde -------------------------------- */
+
+  cls.def("train_t", &system_type::train_t)
+      .def("train_v_t", &system_type::train_v_t)
+      .def_property_readonly(
+          "t_env_probs",
+          [](const system_type &s) {
+            return make_return_tensor<float_type>(s.t_env_probs());
+          })
+      .def_property_readonly(
+          "t_cls_trans_probs",
+          [](const system_type &s)
+              -> const typename system_type::cls_trans_probs_type & {
+            return s.t_cls_trans_probs();
+          })
+      .def_property_readonly("t_cls_rewards", [](const system_type &s) {
+        return make_return_tensor<float_type>(s.t_cls_rewards());
       });
 }
 
 template <auto system_limits, typename f_t, size_t i_t, index_type... n_env_t>
 void make_system_2_len_env(nb::module_ &m,
                            std::integer_sequence<index_type, n_env_t...>) {
+  if constexpr (i_t == 0) {
+    ((make_probs_map<f_t, 2, n_env_t + 1>(m)), ...);
+  }
+
   ((make_system<System<n_env_t + 1, f_t, false, system_limits[i_t][0],
                        system_limits[i_t][1]>>(m)),
    ...);
@@ -252,6 +275,5 @@ NB_MODULE(planning_ext, m) {
   using sp_vec_type = Eigen::SparseVector<f_t>;
 
   make_sparse<f_t>(m);
-  make_tls_sparse<index_type, sp_vec_type>(m);
   make_system_2<f_t, false, 3, 7, 10, 15, 20, 25, 30, 40, 50>(m);
 }

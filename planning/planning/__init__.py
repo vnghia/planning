@@ -1,9 +1,5 @@
-import io
-from multiprocessing import Pool
-
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import plotly.graph_objects as go
 import plotly.subplots as sp
 from matplotlib import colors
@@ -24,6 +20,7 @@ class System:
         save_qs=None,
         **kwargs,
     ):
+        # init
         self.limits = limits
         self.n_class = len(self.limits)
 
@@ -39,9 +36,6 @@ class System:
             else np.zeros((self.n_class, 1, 1))
         )
 
-        self.cls_dims = tuple(np.array(self.limits) + 1)
-        self.env_dims = (self.n_env,) * self.n_class
-
         self.reward_type = reward_type or Reward.linear_2
         self.save_qs = bool(save_qs)
         self.kwargs = kwargs
@@ -53,7 +47,7 @@ class System:
             f"_{self.limits[1]}"
         )
 
-        self.__sys = vars(planning_ext)[self.cpp_type](
+        self._sys = vars(planning_ext)[self.cpp_type](
             self.costs.ravel("F"),
             self.arrivals.ravel("F"),
             self.departures.ravel("F"),
@@ -62,176 +56,67 @@ class System:
             **self.kwargs,
         )
 
-        self._policy_q = None
+        # dimensions
 
-        self.summary = pd.DataFrame()
-        self.summary["Param"] = (
-            [f"Cost {i + 1}" for i in range(self.n_class)]
-            + [f"Arrival {i + 1}" for i in range(self.n_class)]
-            + [f"Departure {i + 1}" for i in range(self.n_class)]
+        self.cls_dims = tuple(np.array(self.limits) + 1)
+        self.env_dims = (self.n_env,) * self.n_class
+
+        # constexpr state types
+        self.states = self._sys.states
+        self.cls_states = self._sys.cls_states
+        self.env_states = self._sys.env_states
+        self.n_state = len(self.states)
+        self.n_cls_state = len(self.cls_states)
+        self.n_env_state = len(self.env_states)
+
+        # system transitions
+        self.trans_probs = self._sys.trans_probs
+
+        # rewards
+        self.rewards = self._sys.rewards
+
+        # additional precomputed probabilities
+        self.state_cls_trans_probs = self._sys.state_cls_trans_probs
+        self.env_trans_probs = self.__to_c_major(
+            self._sys.env_trans_probs, (self.n_env_state, self.n_env_state)
         )
-        for i in range(self.n_env):
-            self.summary[f"Env {i + 1}"] = (
-                self.costs[:, i].tolist()
-                + (self.arrivals[:, i]).tolist()
-                + (self.departures[:, i]).tolist()
-            )
 
-        self._env_trans_probs = (
-            self.__to_c_major(self.__sys.env_trans_probs, (self.n_env**2,) * 2)
-            if self.n_env != 1
+        # q learning
+        self.train_q = self._sys.train_q
+        self.q_shape = self.cls_dims + (self.n_class,)
+        self.q = self.__to_c_major(self._sys.q, self.q_shape)
+        self.q_n_visit = self.__to_c_major(self._sys.q_n_visit, self.q_shape)
+        self.q_policy = self.__to_c_major(self._sys.q_policy, self.cls_dims)
+        self.qs = (
+            self.__to_c_major(self._sys.qs, (-1,) + self.q_shape)
+            if self.save_qs
             else None
         )
 
+        # value iteration
+        self.train_v_s = self._sys.train_v_s
+        self.v = self.__to_c_major(self._sys.v, self.cls_dims)
+        self.v_policy = self.__to_c_major(self._sys.v_policy, self.cls_dims)
+
+        # tilde
+        self.train_t = self._sys.train_t
+        self.train_v_t = self._sys.train_v_t
+        self.t_env_probs = self._sys.t_env_probs
+        self.t_cls_trans_probs = self._sys.t_cls_trans_probs
+        self.t_cls_rewards = self._sys.t_cls_rewards
+
     def __repr__(self):
         return self.cpp_type
-
-    def __getstate__(self):
-        state = io.BytesIO()
-        np.savez_compressed(
-            state,
-            limits=self.limits,
-            costs=self.costs,
-            arrivals=self.arrivals,
-            departures=self.departures,
-            env_trans_mats=self.env_trans_mats,
-            reward_type=self.reward_type,
-            save_qs=self.save_qs,
-            kwargs=self.kwargs,
-            q=self.q,
-            n_visit=self.n_visit,
-            qs=self.qs,
-            policy_q=self.policy_q,
-        )
-        return state.getvalue()
-
-    def __setstate__(self, state):
-        data = np.load(io.BytesIO(state), allow_pickle=True)
-        self.__init__(
-            data["limits"],
-            data["costs"],
-            data["arrivals"],
-            data["departures"],
-            data["env_trans_mats"],
-            data["reward_type"].item(),
-            data["save_qs"].item(),
-            **data["kwargs"].item(),
-        )
-
-        self._q = data["q"]
-        self._n_visit = data["n_visit"]
-        self._qs = data["qs"] if self.save_qs else None
-        self._policy_q = data["policy_q"]
 
     @classmethod
     def __to_c_major(_, data, shape):
         return np.reshape(np.ravel(data, order="C"), shape, order="F")
 
-    def train_q(
-        self,
-        gamma=None,
-        greedy_eps=None,
-        ls=None,
-        seed=None,
-    ):
-        gamma = gamma or 0.9
-        greedy_eps = greedy_eps or 0.8
-        ls = ls or 100000000
-        seed = seed or 42
-
-        self.__sys.train_q(gamma, greedy_eps, ls, seed)
-
-        shape = self.cls_dims + (self.n_class,)
-        self._q = self.__to_c_major(self.__sys.q, shape)
-        self._n_visit = self.__to_c_major(self.__sys.n_visit, shape)
-        self._qs = (
-            self.__to_c_major(self.__sys.qs, (-1,) + shape) if self.save_qs else None
-        )
-        self._policy_q = np.argmax(self.q, axis=-1)
-
-    def train_v(self, gamma=None, ls=None, pi_ls=None):
-        gamma = gamma or 0.9
-        ls = ls or 1000
-        pi_ls = pi_ls or 1000
-
-        self.__sys.train_v(gamma, ls, pi_ls)
-
-        self._env_probs = (
-            self.__to_c_major(self.__sys.env_probs, self.env_dims)
-            if self.n_env != 1
-            else None
-        )
-        self._cls_trans_probs = self.__sys.cls_trans_probs if self.n_env != 1 else None
-        self._cls_rewards = self.__sys.cls_rewards if self.n_env != 1 else None
-
-        self._v = self.__to_c_major(self.__sys.v, self.cls_dims)
-        self._policy_v = self.__to_c_major(self.__sys.policy_v, self.cls_dims)
-
-    @property
-    def states(self):
-        return self.__sys.states
-
-    @property
-    def cls_states(self):
-        return self.__sys.cls_states
-
-    @property
-    def trans_probs(self):
-        return self.__sys.trans_probs
-
-    @property
-    def rewards(self):
-        return self.__sys.rewards
-
-    @property
-    def q(self):
-        return self._q
-
-    @property
-    def n_visit(self):
-        return self._n_visit
-
-    @property
-    def qs(self):
-        return self._qs if self.save_qs else None
-
-    @property
-    def policy_q(self):
-        return self._policy_q
-
-    @property
-    def r_cls_trans_probs(self):
-        return self.__sys.r_cls_trans_probs
-
-    @property
-    def env_trans_probs(self):
-        return self._env_trans_probs
-
-    @property
-    def env_probs(self):
-        return self._env_probs
-
-    @property
-    def cls_trans_probs(self):
-        return self._cls_trans_probs
-
-    @property
-    def cls_rewards(self):
-        return self._cls_rewards
-
-    @property
-    def v(self):
-        return self._v
-
-    @property
-    def policy_v(self):
-        return self._policy_v
-
     def show_policy(self, algo="q", info=""):
         if self.n_class != 2:
             return
 
-        policy = self.policy_q if algo == "q" else self.policy_v
+        policy = self.q_policy if algo == "q" else self.v_policy
 
         ax = plt.axes()
         fig = ax.get_figure()
@@ -286,12 +171,12 @@ class System:
         ax.set_title(f"ratio{info}")
         plt.show()
 
-    def show_n_visit(self, info=""):
+    def show_q_n_visit(self, info=""):
         if self.n_class != 2:
             return
 
-        a1 = self.n_visit[..., 0].ravel()
-        a2 = self.n_visit[..., 1].ravel()
+        a1 = self.q_n_visit[..., 0].ravel()
+        a2 = self.q_n_visit[..., 1].ravel()
 
         _x = np.arange(self.limits[0] + 1)
         _y = np.arange(self.limits[1] + 1)
@@ -341,67 +226,3 @@ class System:
 
         fig.update_layout(title_text=info)
         fig.show()
-
-    @classmethod
-    def __init_and_train_q(
-        cls,
-        limits,
-        costs,
-        arrivals,
-        departures,
-        env_trans_mats,
-        reward_type,
-        save_qs,
-        gamma,
-        greedy_eps,
-        ls,
-        seed,
-        kwargs,
-    ):
-        sys = cls(
-            limits,
-            costs,
-            arrivals,
-            departures,
-            env_trans_mats,
-            reward_type,
-            save_qs,
-            **kwargs,
-        )
-        sys.train_q(gamma, greedy_eps, ls, seed)
-        return sys
-
-    @staticmethod
-    def get_param(
-        limits,
-        costs,
-        arrivals,
-        departures,
-        env_trans_mats=None,
-        reward_type=None,
-        save_qs=None,
-        gamma=None,
-        greedy_eps=None,
-        ls=None,
-        seed=None,
-        **kwargs,
-    ):
-        return (
-            limits,
-            costs,
-            arrivals,
-            departures,
-            env_trans_mats,
-            reward_type,
-            save_qs,
-            gamma,
-            greedy_eps,
-            ls,
-            seed,
-            kwargs,
-        )
-
-    @classmethod
-    def train_parallel(cls, parameters):
-        with Pool() as p:
-            return p.starmap(cls.__init_and_train_q, parameters)
