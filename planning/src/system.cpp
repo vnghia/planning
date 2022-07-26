@@ -22,7 +22,6 @@ struct nb::detail::type_caster<std::array<Type, N>>
 template <typename system_type>
 auto make_system_name() {
   return "system_" + std::to_string(system_type::n_env) + "_" +
-         std::to_string(system_type::save_qs) + "_" +
          std::to_string(system_type::class_dims[0] - 1) + "_" +
          std::to_string(system_type::class_dims[1] - 1);
 }
@@ -90,6 +89,29 @@ void make_probs_map(nb::module_ &m) {
           keys.push_back(k);
         }
         return keys;
+      });
+}
+
+void make_n_cls_trans_map(nb::module_ &m) {
+  using n_cls_trans_type = tsl::sparse_map<index_type, uint64_t>;
+  nb::class_<n_cls_trans_type>(m, "n_cls_trans_type")
+      .def("__len__", [](const n_cls_trans_type &map) { return map.size(); })
+      .def("__getitem__",
+           [](n_cls_trans_type &map, index_type k) { return map[k]; })
+      .def("keys",
+           [](n_cls_trans_type &map) {
+             std::vector<index_type> keys;
+             for (const auto &[k, _] : map) {
+               keys.push_back(k);
+             }
+             return keys;
+           })
+      .def("values", [](n_cls_trans_type &map) {
+        std::vector<uint64_t> values;
+        for (const auto &[_, v] : map) {
+          values.push_back(v);
+        }
+        return values;
       });
 }
 
@@ -178,26 +200,58 @@ void make_system(nb::module_ &m) {
             s.env_trans_probs);
       });
 
+  /* ---------------------- class states - interactive ---------------------- */
+
+  cls.def_property_readonly(
+         "n_cls_visit",
+         [](const system_type &s) {
+           return make_return_tensor<uint64_t>(s.n_cls_visit());
+         })
+      .def_property_readonly(
+          "n_cls_trans", [](const system_type &s) { return s.n_cls_trans(); })
+      .def_property_readonly(
+          "cls_cum_rewards",
+          [](const system_type &s) {
+            return make_return_tensor<float_type>(s.cls_cum_rewards());
+          })
+      .def_property_readonly("n_cls_trans_total", [](const system_type &s) {
+        return s.n_cls_trans_total();
+      });
+
+  /* ------------------------------ interactive
+     ----------------------------- */
+
+  cls.def("train_i", &system_type::train_i)
+      .def("train_v_i", &system_type::train_v_i)
+      .def_property_readonly(
+          "i_cls_trans_probs",
+          [](const system_type &s)
+              -> const typename system_type::cls_trans_probs_type & {
+            return s.i_cls_trans_probs();
+          })
+      .def_property_readonly("i_cls_rewards", [](const system_type &s) {
+        return make_return_tensor<float_type>(s.i_cls_rewards());
+      });
+
   /* ------------------------------ q learning ------------------------------ */
 
   cls.def("train_q", &system_type::train_q)
+      .def("train_q_n_cls", &system_type::train_q_n_cls)
+      .def("train_q_qs", &system_type::train_q_qs)
+      .def("train_q_full", &system_type::train_q_full)
       .def_property_readonly("q",
                              [](const system_type &s) {
                                return make_return_tensor<float_type>(s.q());
                              })
-      .def_property_readonly(
-          "q_n_visit",
-          [](const system_type &s) {
-            return make_return_tensor<uint64_t>(s.q_n_visit());
-          })
       .def_property_readonly(
           "q_policy",
           [](const system_type &s) {
             return make_return_tensor<index_type>(s.q_policy());
           })
       .def_property_readonly("qs", [](const system_type &s) {
-        return make_return_tensor<float_type, system_type::save_qs>(s.qs());
+        return make_return_tensor<float_type>(s.qs());
       });
+
   /* ---------------------------- value iteration --------------------------- */
 
   cls.def("train_v_s", &system_type::train_v_s)
@@ -234,13 +288,12 @@ void make_system_2_len_env(nb::module_ &m,
                            std::integer_sequence<index_type, n_env_t...>) {
   if constexpr (i_t == 0) {
     ((make_probs_map<f_t, 2, n_env_t + 1>(m)), ...);
+    make_n_cls_trans_map(m);
   }
 
-  ((make_system<System<n_env_t + 1, f_t, false, system_limits[i_t][0],
-                       system_limits[i_t][1]>>(m)),
-   ...);
-  ((make_system<System<n_env_t + 1, f_t, true, system_limits[i_t][0],
-                       system_limits[i_t][1]>>(m)),
+  ((make_system<
+       System<n_env_t + 1, f_t, system_limits[i_t][0], system_limits[i_t][1]>>(
+       m)),
    ...);
 }
 

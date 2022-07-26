@@ -17,7 +17,6 @@ class System:
         departures,
         env_trans_mats=None,
         reward_type=None,
-        save_qs=None,
         **kwargs,
     ):
         # init
@@ -33,19 +32,13 @@ class System:
         self.env_trans_mats = (
             np.array(env_trans_mats).reshape((self.n_class, self.n_env, self.n_env))
             if self.n_env > 1
-            else np.zeros((self.n_class, 1, 1))
+            else np.ones((self.n_class, 1, 1))
         )
 
         self.reward_type = reward_type or Reward.linear_2
-        self.save_qs = bool(save_qs)
         self.kwargs = kwargs
 
-        self.cpp_type = (
-            f"system_{self.n_env}"
-            f"_{int(self.save_qs)}"
-            f"_{self.limits[0]}"
-            f"_{self.limits[1]}"
-        )
+        self.cpp_type = f"system_{self.n_env}_{self.limits[0]}_{self.limits[1]}"
 
         self._sys = vars(planning_ext)[self.cpp_type](
             self.costs.ravel("F"),
@@ -60,6 +53,7 @@ class System:
 
         self.cls_dims = tuple(np.array(self.limits) + 1)
         self.env_dims = (self.n_env,) * self.n_class
+        self.interactive_shape = self.cls_dims + (self.n_class,)
 
         # constexpr state types
         self.states = self._sys.states
@@ -81,17 +75,27 @@ class System:
             self._sys.env_trans_probs, (self.n_env_state, self.n_env_state)
         )
 
+        # class states - interactive
+        self.n_cls_visit = self.__to_c_major(
+            self._sys.n_cls_visit, self.interactive_shape
+        )
+        self.n_cls_trans = self._sys.n_cls_trans
+        self.cls_cum_rewards = self._sys.cls_cum_rewards
+
+        # interactive
+        self.train_i = self._sys.train_i
+        self.train_v_i = self._sys.train_v_i
+        self.i_cls_trans_probs = self._sys.i_cls_trans_probs
+        self.i_cls_rewards = self._sys.i_cls_rewards
+
         # q learning
         self.train_q = self._sys.train_q
-        self.q_shape = self.cls_dims + (self.n_class,)
-        self.q = self.__to_c_major(self._sys.q, self.q_shape)
-        self.q_n_visit = self.__to_c_major(self._sys.q_n_visit, self.q_shape)
+        self.train_q_n_cls = self._sys.train_q_n_cls
+        self.train_q_qs = self._sys.train_q_qs
+        self.train_q_full = self._sys.train_q_full
+        self.q = self.__to_c_major(self._sys.q, self.interactive_shape)
         self.q_policy = self.__to_c_major(self._sys.q_policy, self.cls_dims)
-        self.qs = (
-            self.__to_c_major(self._sys.qs, (-1,) + self.q_shape)
-            if self.save_qs
-            else None
-        )
+        self.qs = self.__to_c_major(self._sys.qs, (-1,) + self.interactive_shape)
 
         # value iteration
         self.train_v_s = self._sys.train_v_s
@@ -104,6 +108,8 @@ class System:
         self.t_env_probs = self._sys.t_env_probs
         self.t_cls_trans_probs = self._sys.t_cls_trans_probs
         self.t_cls_rewards = self._sys.t_cls_rewards
+
+        self.dists = []
 
     def __repr__(self):
         return self.cpp_type
@@ -171,12 +177,12 @@ class System:
         ax.set_title(f"ratio{info}")
         plt.show()
 
-    def show_q_n_visit(self, info=""):
+    def show_n_cls_visit(self, info=""):
         if self.n_class != 2:
             return
 
-        a1 = self.q_n_visit[..., 0].ravel()
-        a2 = self.q_n_visit[..., 1].ravel()
+        a1 = self.n_cls_visit[..., 0].ravel()
+        a2 = self.n_cls_visit[..., 1].ravel()
 
         _x = np.arange(self.limits[0] + 1)
         _y = np.arange(self.limits[1] + 1)
@@ -191,34 +197,64 @@ class System:
         )
         for i, j, z1, z2 in zip(x, y, a1, a2):
             fig.add_trace(
-                go.Scatter3d(
-                    {
-                        "hoverinfo": "text",
-                        "hovertext": f"L1 = {i}<br />L2 = {j}<br />n_visit = {z1}",
-                        "line": {"color": "blue", "width": 10},
-                        "mode": "lines",
-                        "showlegend": False,
-                        "x": [i, i],
-                        "y": [j, j],
-                        "z": [z1, 0],
-                    }
+                go.Mesh3d(
+                    x=[
+                        i + 0.25,
+                        i + 0.25,
+                        i + 0.75,
+                        i + 0.75,
+                        i + 0.25,
+                        i + 0.25,
+                        i + 0.75,
+                        i + 0.75,
+                    ],
+                    y=[
+                        j + 0.25,
+                        j + 0.75,
+                        j + 0.75,
+                        j + 0.25,
+                        j + 0.25,
+                        j + 0.75,
+                        j + 0.75,
+                        j + 0.25,
+                    ],
+                    z=[0, 0, 0, 0, z1, z1, z1, z1],
+                    alphahull=0,
+                    hoverinfo="text",
+                    hovertext=f"L1 = {i}<br />L2 = {j}<br />n_visit = {z1}",
+                    color="blue",
                 ),
                 row=1,
                 col=1,
             )
 
             fig.add_trace(
-                go.Scatter3d(
-                    {
-                        "hoverinfo": "text",
-                        "hovertext": f"L1 = {i}<br />L2 = {j}<br />n_visit = {z2}",
-                        "line": {"color": "orange", "width": 10},
-                        "mode": "lines",
-                        "showlegend": False,
-                        "x": [i, i],
-                        "y": [j, j],
-                        "z": [z2, 0],
-                    }
+                go.Mesh3d(
+                    x=[
+                        i + 0.25,
+                        i + 0.25,
+                        i + 0.75,
+                        i + 0.75,
+                        i + 0.25,
+                        i + 0.25,
+                        i + 0.75,
+                        i + 0.75,
+                    ],
+                    y=[
+                        j + 0.25,
+                        j + 0.75,
+                        j + 0.75,
+                        j + 0.25,
+                        j + 0.25,
+                        j + 0.75,
+                        j + 0.75,
+                        j + 0.25,
+                    ],
+                    z=[0, 0, 0, 0, z2, z2, z2, z2],
+                    alphahull=0,
+                    hoverinfo="text",
+                    hovertext=f"L1 = {i}<br />L2 = {j}<br />n_visit = {z2}",
+                    color="orange",
                 ),
                 row=1,
                 col=2,
@@ -226,3 +262,25 @@ class System:
 
         fig.update_layout(title_text=info)
         fig.show()
+
+    def distance_trans_probs(self):
+        self.dists = []
+        for i in range(self.n_cls_state):
+            self.dists.append([])
+            for a in range(self.n_class):
+                self.dists[i].append(
+                    np.abs(
+                        self.i_cls_trans_probs[i][a].values
+                        - self.t_cls_trans_probs[i][a].values
+                    )
+                )
+        return self.dists
+
+    def max_distance_trans_probs(self):
+        self.distance_trans_probs()
+        return np.max(
+            [
+                np.max([np.max(d) if np.size(d) != 0 else 0 for d in dist])
+                for dist in self.dists
+            ]
+        )
