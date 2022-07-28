@@ -238,7 +238,6 @@ class System {
     cls_cum_rewards_.fill(0);
     i_cls_trans_probs_.fill({});
     i_cls_rewards_.fill(0);
-    n_cls_trans_total_ = 0;
   }
 
   /* --------------------------- train q learning --------------------------- */
@@ -453,7 +452,6 @@ class System {
   const cls_cum_rewards_type& cls_cum_rewards() const {
     return cls_cum_rewards_;
   }
-  const uint64_t& n_cls_trans_total() const { return n_cls_trans_total_; }
 
   /* ------------------------------ interactive ----------------------------- */
 
@@ -516,7 +514,6 @@ class System {
   n_cls_visit_type n_cls_visit_;
   n_cls_trans_type n_cls_trans_;
   cls_cum_rewards_type cls_cum_rewards_;
-  uint64_t n_cls_trans_total_;
 
   /* ------------------------------ interactive ----------------------------- */
 
