@@ -73,7 +73,7 @@ void make_probs_map(nb::module_ &m) {
   })();
 
   using probs_map_type =
-      tsl::sparse_map<index_type, Eigen::Matrix<float_type, 1, n_env_state>>;
+      tsl::robin_map<index_type, Eigen::Matrix<float_type, 1, n_env_state>>;
 
   nb::class_<probs_map_type>(
       m,
@@ -93,7 +93,7 @@ void make_probs_map(nb::module_ &m) {
 }
 
 void make_n_cls_trans_map(nb::module_ &m) {
-  using n_cls_trans_type = tsl::sparse_map<index_type, uint64_t>;
+  using n_cls_trans_type = tsl::robin_map<index_type, uint64_t>;
   nb::class_<n_cls_trans_type>(m, "n_cls_trans_type")
       .def("__len__", [](const n_cls_trans_type &map) { return map.size(); })
       .def("__getitem__",

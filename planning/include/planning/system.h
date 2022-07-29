@@ -15,7 +15,7 @@
 #include "Eigen/Dense"
 #include "Eigen/SparseCore"
 #include "planning/xoshiro.h"
-#include "tsl/sparse_map.h"
+#include "tsl/robin_map.h"
 #include "unsupported/Eigen/CXX11/Tensor"
 
 using index_type = Eigen::Index;
@@ -162,7 +162,7 @@ class System {
 
   using n_cls_visit_type = Eigen::Matrix<uint64_t, n_cls_state, n_class>;
   using n_cls_trans_type =
-      std::array<std::array<tsl::sparse_map<index_type, uint64_t>, n_class>,
+      std::array<std::array<tsl::robin_map<index_type, uint64_t>, n_class>,
                  n_cls_state>;
   using cls_cum_rewards_type = std::array<float_type, n_cls_state>;
 
@@ -187,9 +187,9 @@ class System {
 
   // P(S'|S, E, a) by (S', a, S, E)
   using state_cls_trans_probs_type = std::array<
-      std::array<tsl::sparse_map<index_type,
-                                 Eigen::Matrix<float_type, 1, n_env_state>>,
-                 n_class>,
+      std::array<
+          tsl::robin_map<index_type, Eigen::Matrix<float_type, 1, n_env_state>>,
+          n_class>,
       n_cls_state>;
 
   // P(E'|E) by (E, E')
