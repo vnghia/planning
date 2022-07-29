@@ -79,32 +79,25 @@ class System:
         self.n_cls_visit = self.__to_c_major(
             self._sys.n_cls_visit, self.interactive_shape
         )
-        self.n_cls_trans = self._sys.n_cls_trans
-        self.cls_cum_rewards = self._sys.cls_cum_rewards
-
-        # interactive
-        self.train_i = self._sys.train_i
-        self.train_v_i = self._sys.train_v_i
-        self.i_cls_trans_probs = self._sys.i_cls_trans_probs
-        self.i_cls_rewards = self._sys.i_cls_rewards
 
         # q learning
         self.train_q = self._sys.train_q
-        self.train_q_n_cls = self._sys.train_q_n_cls
+        self.train_q_i = self._sys.train_q_i
         self.train_q_qs = self._sys.train_q_qs
         self.train_q_full = self._sys.train_q_full
         self.q = self.__to_c_major(self._sys.q, self.interactive_shape)
         self.q_policy = self.__to_c_major(self._sys.q_policy, self.cls_dims)
         self.qs = self.__to_c_major(self._sys.qs, (-1,) + self.interactive_shape)
+        self.i_cls_trans_probs = self._sys.i_cls_trans_probs
+        self.i_cls_rewards = self._sys.i_cls_rewards
 
         # value iteration
-        self.train_v_s = self._sys.train_v_s
+        self.train_v = self._sys.train_v
         self.v = self.__to_c_major(self._sys.v, self.cls_dims)
         self.v_policy = self.__to_c_major(self._sys.v_policy, self.cls_dims)
 
         # tilde
         self.train_t = self._sys.train_t
-        self.train_v_t = self._sys.train_v_t
         self.t_env_probs = self._sys.t_env_probs
         self.t_cls_trans_probs = self._sys.t_cls_trans_probs
         self.t_cls_rewards = self._sys.t_cls_rewards

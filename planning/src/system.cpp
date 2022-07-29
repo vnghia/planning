@@ -202,27 +202,45 @@ void make_system(nb::module_ &m) {
 
   /* ---------------------- class states - interactive ---------------------- */
 
-  cls.def_property_readonly(
-         "n_cls_visit",
-         [](const system_type &s) {
-           return make_return_tensor<uint64_t>(s.n_cls_visit());
-         })
-      .def_property_readonly(
-          "n_cls_trans", [](const system_type &s) { return s.n_cls_trans(); })
-      .def_property_readonly(
-          "cls_cum_rewards",
-          [](const system_type &s) {
-            return make_return_tensor<float_type>(s.cls_cum_rewards());
+  cls.def_property_readonly("n_cls_visit", [](const system_type &s) {
+    return make_return_tensor<uint64_t>(s.n_cls_visit());
+  });
+
+  /* ------------------------------ q learning ------------------------------ */
+
+  cls.def("train_q",
+          [](system_type &s, float_type gamma, float_type greedy_eps,
+             uint64_t ls, uint64_t seed) {
+            s.template train_q<false, false>(gamma, greedy_eps, ls, seed);
           })
-      .def_property_readonly("n_cls_trans_total", [](const system_type &s) {
-        return s.n_cls_trans_total();
-      });
-
-  /* ------------------------------ interactive
-     ----------------------------- */
-
-  cls.def("train_i", &system_type::train_i)
-      .def("train_v_i", &system_type::train_v_i)
+      .def("train_q_i",
+           [](system_type &s, float_type gamma, float_type greedy_eps,
+              uint64_t ls, uint64_t seed) {
+             s.template train_q<true, false>(gamma, greedy_eps, ls, seed);
+           })
+      .def("train_q_qs",
+           [](system_type &s, float_type gamma, float_type greedy_eps,
+              uint64_t ls, uint64_t seed) {
+             s.template train_q<false, true>(gamma, greedy_eps, ls, seed);
+           })
+      .def("train_q_full",
+           [](system_type &s, float_type gamma, float_type greedy_eps,
+              uint64_t ls, uint64_t seed) {
+             s.template train_q<true, true>(gamma, greedy_eps, ls, seed);
+           })
+      .def_property_readonly("q",
+                             [](const system_type &s) {
+                               return make_return_tensor<float_type>(s.q());
+                             })
+      .def_property_readonly(
+          "q_policy",
+          [](const system_type &s) {
+            return make_return_tensor<index_type>(s.q_policy());
+          })
+      .def_property_readonly("qs",
+                             [](const system_type &s) {
+                               return make_return_tensor<float_type>(s.qs());
+                             })
       .def_property_readonly(
           "i_cls_trans_probs",
           [](const system_type &s)
@@ -233,28 +251,9 @@ void make_system(nb::module_ &m) {
         return make_return_tensor<float_type>(s.i_cls_rewards());
       });
 
-  /* ------------------------------ q learning ------------------------------ */
-
-  cls.def("train_q", &system_type::train_q)
-      .def("train_q_n_cls", &system_type::train_q_n_cls)
-      .def("train_q_qs", &system_type::train_q_qs)
-      .def("train_q_full", &system_type::train_q_full)
-      .def_property_readonly("q",
-                             [](const system_type &s) {
-                               return make_return_tensor<float_type>(s.q());
-                             })
-      .def_property_readonly(
-          "q_policy",
-          [](const system_type &s) {
-            return make_return_tensor<index_type>(s.q_policy());
-          })
-      .def_property_readonly("qs", [](const system_type &s) {
-        return make_return_tensor<float_type>(s.qs());
-      });
-
   /* ---------------------------- value iteration --------------------------- */
 
-  cls.def("train_v_s", &system_type::train_v_s)
+  cls.def("train_v", &system_type::train_v)
       .def_property_readonly("v",
                              [](const system_type &s) {
                                return make_return_tensor<float_type>(s.v());
@@ -266,7 +265,6 @@ void make_system(nb::module_ &m) {
   /* --------------------------------- tilde -------------------------------- */
 
   cls.def("train_t", &system_type::train_t)
-      .def("train_v_t", &system_type::train_v_t)
       .def_property_readonly(
           "t_env_probs",
           [](const system_type &s) {

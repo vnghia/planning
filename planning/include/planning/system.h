@@ -266,17 +266,14 @@ class System {
     q_(0, 0) = 0;
   }
 
-  template <bool log_n_trans, bool train_q, bool save_qs>
-  void train_interactive(float_type gamma, float_type greedy_eps, uint64_t ls,
-                         uint64_t seed) {
+  template <bool log_i_t, bool log_qs_t>
+  void train_q(float_type gamma, float_type greedy_eps, uint64_t ls,
+               uint64_t seed) {
     reset(seed);
     reset_interactive();
+    reset_q();
 
-    if constexpr (train_q) {
-      reset_q();
-    }
-
-    if constexpr (train_q && save_qs) {
+    if constexpr (log_qs_t) {
       qs_.resize(ls * q_.size());
     }
 
@@ -284,14 +281,10 @@ class System {
       const auto cls_state = to_cls_state[state_];
 
       index_type a;
-      if constexpr (!train_q) {
+      if (q_greedy_dis_(rng) < greedy_eps) {
         a = action_dists_[cls_state](rng);
       } else {
-        if (q_greedy_dis_(rng) < greedy_eps) {
-          a = action_dists_[cls_state](rng);
-        } else {
-          q_.row(cls_state).maxCoeff(&a);
-        }
+        q_.row(cls_state).maxCoeff(&a);
       }
 
       const auto reward = rewards[state_];
@@ -301,25 +294,23 @@ class System {
 
       const auto next_cls_state = to_cls_state[state_];
 
-      if constexpr (train_q) {
-        const auto next_q = q_.row(next_cls_state).maxCoeff();
-        q_(cls_state, a) +=
-            (static_cast<float_type>(1) / n_cls_visit_(cls_state, a)) *
-            (reward + gamma * next_q - q_(cls_state, a));
-      }
+      const auto next_q = q_.row(next_cls_state).maxCoeff();
+      q_(cls_state, a) +=
+          (static_cast<float_type>(1) / n_cls_visit_(cls_state, a)) *
+          (reward + gamma * next_q - q_(cls_state, a));
 
-      if constexpr (log_n_trans) {
+      if constexpr (log_i_t) {
         ++n_cls_trans_[cls_state][a].try_emplace(next_cls_state).first.value();
         cls_cum_rewards_[cls_state] += reward;
       }
 
-      if constexpr (train_q && save_qs) {
+      if constexpr (log_qs_t) {
         std::copy(q_.data(), q_.data() + q_.size(),
                   qs_.begin() + i * q_.size());
       }
     }
 
-    if constexpr (log_n_trans) {
+    if constexpr (log_i_t) {
       for (index_type i = 0; i < n_cls_state; ++i) {
         for (index_type a = 0; a < n_class; ++a) {
           const auto n_visit = n_cls_visit_(i, a);
@@ -335,46 +326,17 @@ class System {
       }
     }
 
-    if constexpr (train_q) {
-      for (index_type i = 0; i < n_cls_state; ++i) {
-        q_.row(i).maxCoeff(&q_policy_(i));
-      }
+    for (index_type i = 0; i < n_cls_state; ++i) {
+      q_.row(i).maxCoeff(&q_policy_(i));
     }
-  }
-
-  void train_i(uint64_t ls, uint64_t seed) {
-    train_interactive<true, false, false>(0, 0, ls, seed);
-  }
-
-  void train_q(float_type gamma, float_type greedy_eps, uint64_t ls,
-               uint64_t seed) {
-    train_interactive<false, true, false>(gamma, greedy_eps, ls, seed);
-  }
-
-  void train_q_n_cls(float_type gamma, float_type greedy_eps, uint64_t ls,
-                     uint64_t seed) {
-    train_interactive<true, true, false>(gamma, greedy_eps, ls, seed);
-  }
-
-  void train_q_qs(float_type gamma, float_type greedy_eps, uint64_t ls,
-                  uint64_t seed) {
-    train_interactive<false, true, true>(gamma, greedy_eps, ls, seed);
-  }
-
-  void train_q_full(float_type gamma, float_type greedy_eps, uint64_t ls,
-                    uint64_t seed) {
-    train_interactive<true, true, true>(gamma, greedy_eps, ls, seed);
-  }
-
-  void train_v_i(float_type gamma, uint64_t ls) {
-    train_v(i_cls_trans_probs_, i_cls_rewards_, gamma, ls);
   }
 
   /* ------------------------- train value iteration ------------------------ */
 
-  void train_v(const cls_trans_probs_type& cls_trans_probs,
-               const cls_rewards_type& cls_rewards, float_type gamma,
-               uint64_t ls) {
+  void train_v(float_type gamma, uint64_t ls) {
+    if constexpr (n_env == 1) {
+      train_t(0);
+    }
     static constexpr auto iota_n_cls_state = make_iota<0, n_cls_state>();
 
     v_.fill(0);
@@ -382,25 +344,15 @@ class System {
 
     for (uint64_t i = 0; i < ls; ++i) {
       const auto v_i = v_;
-      std::for_each(
-          std::execution::par_unseq, iota_n_cls_state.begin(),
-          iota_n_cls_state.end(),
-          [&cls_trans_probs, &cls_rewards, gamma, this, &v_i](index_type j) {
-            update_v_i<false>(cls_trans_probs, cls_rewards, gamma, j, v_i);
-          });
+      std::for_each(std::execution::par_unseq, iota_n_cls_state.begin(),
+                    iota_n_cls_state.end(), [gamma, this, &v_i](index_type j) {
+                      update_v_i<false>(gamma, j, v_i);
+                    });
     }
     std::for_each(std::execution::par_unseq, iota_n_cls_state.begin(),
-                  iota_n_cls_state.end(),
-                  [&cls_trans_probs, &cls_rewards, gamma, this](index_type j) {
-                    update_v_i<true>(cls_trans_probs, cls_rewards, gamma, j,
-                                     v_);
+                  iota_n_cls_state.end(), [gamma, this](index_type j) {
+                    update_v_i<true>(gamma, j, v_);
                   });
-  }
-
-  void train_v_s(float_type gamma, uint64_t ls) {
-    if constexpr (n_env == 1) {
-      train_v(trans_probs, rewards, gamma, ls);
-    }
   }
 
   /* ------------------------------ train tilde ----------------------------- */
@@ -441,17 +393,9 @@ class System {
     }
   }
 
-  void train_v_t(float_type gamma, uint64_t ls) {
-    train_v(t_cls_trans_probs_, t_cls_rewards_, gamma, ls);
-  }
-
   /* ---------------------- class states - interactive ---------------------- */
 
   const n_cls_visit_type& n_cls_visit() const { return n_cls_visit_; }
-  const n_cls_trans_type& n_cls_trans() const { return n_cls_trans_; }
-  const cls_cum_rewards_type& cls_cum_rewards() const {
-    return cls_cum_rewards_;
-  }
 
   /* ------------------------------ interactive ----------------------------- */
 
@@ -750,29 +694,27 @@ class System {
 
   /* -------------------- train value iteration internal -------------------- */
 
-  template <bool update_policy>
-  void update_v_i(const cls_trans_probs_type& cls_trans_probs,
-                  const cls_rewards_type& cls_rewards, float_type gamma,
-                  index_type j, const v_type& v_i) {
+  template <bool update_policy_t>
+  void update_v_i(float_type gamma, index_type j, const v_type& v_i) {
     float_type max_v = -inf_v;
     index_type max_a = 0;
 
     for (index_type a = 0; a < n_class; ++a) {
-      float_type val_v = cls_rewards[j];
-      const auto& probs = cls_trans_probs[j][a];
+      float_type val_v = t_cls_rewards_[j];
+      const auto& probs = t_cls_trans_probs_[j][a];
 
       if (!probs.nonZeros()) continue;
       val_v += gamma * probs.transpose() * v_i;
 
       if (max_v < val_v) {
         max_v = val_v;
-        if constexpr (update_policy) {
+        if constexpr (update_policy_t) {
           max_a = a;
         }
       }
     }
 
-    if constexpr (update_policy) {
+    if constexpr (update_policy_t) {
       v_policy_[j] = max_a;
     } else {
       v_[j] = max_v;
