@@ -21,18 +21,18 @@ class System:
     ):
         # init
         self.limits = limits
-        self.n_class = len(self.limits)
+        self.n_cls = len(self.limits)
 
-        self.costs = np.array(costs).reshape((self.n_class, -1))
+        self.costs = np.array(costs).reshape((self.n_cls, -1))
         self.n_env = self.costs.shape[1]
 
-        self.arrivals = np.array(arrivals).reshape((self.n_class, self.n_env))
-        self.departures = np.array(departures).reshape((self.n_class, self.n_env))
+        self.arrivals = np.array(arrivals).reshape((self.n_cls, self.n_env))
+        self.departures = np.array(departures).reshape((self.n_cls, self.n_env))
 
         self.env_trans_mats = (
-            np.array(env_trans_mats).reshape((self.n_class, self.n_env, self.n_env))
+            np.array(env_trans_mats).reshape((self.n_cls, self.n_env, self.n_env))
             if self.n_env > 1
-            else np.ones((self.n_class, 1, 1))
+            else np.ones((self.n_cls, 1, 1))
         )
 
         self.reward_type = reward_type or Reward.linear_2
@@ -41,10 +41,10 @@ class System:
         self.cpp_type = f"system_{self.n_env}_{self.limits[0]}_{self.limits[1]}"
 
         self._sys = vars(planning_ext)[self.cpp_type](
-            self.costs.ravel("F"),
-            self.arrivals.ravel("F"),
-            self.departures.ravel("F"),
-            self.env_trans_mats.ravel("F"),
+            self.costs,
+            self.arrivals,
+            self.departures,
+            self.env_trans_mats,
             self.reward_type,
             **self.kwargs,
         )
@@ -52,16 +52,11 @@ class System:
         # dimensions
 
         self.cls_dims = tuple(np.array(self.limits) + 1)
-        self.env_dims = (self.n_env,) * self.n_class
-        self.interactive_shape = self.cls_dims + (self.n_class,)
+        self.env_dims = (self.n_env,) * self.n_cls
+        self.interactive_shape = self.cls_dims + (self.n_cls,)
 
         # constexpr state types
-        self.states = self._sys.states
-        self.cls_states = self._sys.cls_states
-        self.env_states = self._sys.env_states
-        self.n_state = len(self.states)
-        self.n_cls_state = len(self.cls_states)
-        self.n_env_state = len(self.env_states)
+        self.state = self._sys.state
 
         # system transitions
         self.trans_probs = self._sys.trans_probs
@@ -70,31 +65,28 @@ class System:
         self.rewards = self._sys.rewards
 
         # additional precomputed probabilities
-        self.state_cls_trans_probs = self._sys.state_cls_trans_probs
-        self.env_trans_probs = self.__to_c_major(
-            self._sys.env_trans_probs, (self.n_env_state, self.n_env_state)
+        self.env_trans_probs = np.reshape(
+            self._sys.env_trans_probs, (len(self.state.env), len(self.state.env))
         )
 
         # class states - interactive
-        self.n_cls_visit = self.__to_c_major(
-            self._sys.n_cls_visit, self.interactive_shape
-        )
+        self.n_cls_visit = np.reshape(self._sys.n_cls_visit, self.interactive_shape)
 
         # q learning
         self.train_q = self._sys.train_q
         self.train_q_i = self._sys.train_q_i
         self.train_q_qs = self._sys.train_q_qs
         self.train_q_full = self._sys.train_q_full
-        self.q = self.__to_c_major(self._sys.q, self.interactive_shape)
-        self.q_policy = self.__to_c_major(self._sys.q_policy, self.cls_dims)
-        self.qs = self.__to_c_major(self._sys.qs, (-1,) + self.interactive_shape)
+        self.q = np.reshape(self._sys.q, self.interactive_shape)
+        self.q_policy = np.reshape(self._sys.q_policy, self.cls_dims)
+        self.qs = np.reshape(self._sys.qs, (-1,) + self.interactive_shape)
         self.i_cls_trans_probs = self._sys.i_cls_trans_probs
         self.i_cls_rewards = self._sys.i_cls_rewards
 
         # value iteration
         self.train_v = self._sys.train_v
-        self.v = self.__to_c_major(self._sys.v, self.cls_dims)
-        self.v_policy = self.__to_c_major(self._sys.v_policy, self.cls_dims)
+        self.v = np.reshape(self._sys.v, self.cls_dims)
+        self.v_policy = np.reshape(self._sys.v_policy, self.cls_dims)
 
         # tilde
         self.train_t = self._sys.train_t
@@ -107,12 +99,8 @@ class System:
     def __repr__(self):
         return self.cpp_type
 
-    @classmethod
-    def __to_c_major(_, data, shape):
-        return np.reshape(np.ravel(data, order="C"), shape, order="F")
-
     def show_policy(self, algo="q", info=""):
-        if self.n_class != 2:
+        if self.n_cls != 2:
             return
 
         policy = self.q_policy if algo == "q" else self.v_policy
@@ -149,7 +137,7 @@ class System:
                 plt.show()
 
     def show_ratio(self, info=""):
-        if self.n_class != 2:
+        if self.n_cls != 2:
             return
 
         ax = plt.axes()
@@ -171,7 +159,7 @@ class System:
         plt.show()
 
     def show_n_cls_visit(self, info=""):
-        if self.n_class != 2:
+        if self.n_cls != 2:
             return
 
         a1 = self.n_cls_visit[..., 0].ravel()
@@ -258,9 +246,9 @@ class System:
 
     def distance_trans_probs(self):
         self.dists = []
-        for i in range(self.n_cls_state):
+        for i in range(len(self.state.cls)):
             self.dists.append([])
-            for a in range(self.n_class):
+            for a in range(self.n_cls):
                 self.dists[i].append(
                     np.abs(
                         self.i_cls_trans_probs[i][a].values

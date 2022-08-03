@@ -9,196 +9,108 @@
 #include <random>
 #include <tuple>
 #include <utility>
-#include <variant>
-#include <vector>
 
 #include "Eigen/Dense"
 #include "Eigen/SparseCore"
+#include "planning/state.h"
 #include "planning/xoshiro.h"
 #include "tsl/robin_map.h"
 #include "unsupported/Eigen/CXX11/Tensor"
 
-using index_type = Eigen::Index;
+using float_type = double;
+using sp_vec_type = Eigen::SparseVector<float_type, storage_order, index_type>;
+using sp_vec_it = typename sp_vec_type::InnerIterator;
 
 XoshiroCpp::Xoshiro256Plus rng;
 
-template <index_type begin, index_type end>
-static constexpr auto make_iota() {
-  std::array<index_type, end - begin> res;
-  std::iota(res.begin(), res.end(), begin);
-  return res;
-}
-
-template <index_type... set_lens_t>
-static constexpr auto make_set_product() {
-  constexpr auto n_combination = (set_lens_t * ... * 1);
-  constexpr auto n_set = sizeof...(set_lens_t);
-  constexpr auto set_lens = std::array{set_lens_t...};
-
-  std::array<std::array<index_type, n_set>, n_combination> product;
-
-  for (index_type i = 0; i < n_combination; ++i) {
-    auto current = i;
-
-    for (index_type j = 0; j < n_set; ++j) {
-      product[i][j] = current % set_lens[j];
-      current /= set_lens[j];
-    }
-  }
-
-  return product;
-}
-
-using transition_status_type = std::optional<index_type>;
-
-template <index_type dim_state, index_type n_class>
-static constexpr transition_status_type can_transition_to(const auto& s1,
-                                                          const auto& s2,
-                                                          index_type action) {
-  transition_status_type res{};
-
-  for (index_type i = 0; i < dim_state; ++i) {
-    const auto diff = s2[i] - s1[i];
-    if (diff) {
-      if (res) {
-        return std::nullopt;
-      } else if ((i >= n_class) ||
-                 ((diff == -1 && i == action) || (diff == 1))) {
-        res = i;
-      } else {
-        return std::nullopt;
-      }
-    }
-  }
-
-  return res;
-}
-
-template <index_type n_env_t, typename float_t, index_type... limits_t>
+template <index_type n_env_t, index_type... limits_t>
 class System {
  public:
-  static constexpr index_type n_class = sizeof...(limits_t);
-  static constexpr auto n_env = n_env_t;
+  using state = State<n_env_t, limits_t...>;
 
-  using float_type = float_t;
+  static constexpr auto& n_env = state::n_env;
+
+  static constexpr auto& n_cls = state::n_cls;
+  static constexpr auto& cls_dims = state::cls_dims;
+
   static constexpr auto inf_v = std::numeric_limits<float_type>::infinity();
+  static constexpr auto eps_v = std::numeric_limits<float_type>::epsilon();
 
-  static constexpr std::array class_dims = {limits_t + 1 ...};
-
-  using costs_type = Eigen::Matrix<float_type, n_class, n_env>;
+  using costs_type =
+      Eigen::TensorFixedSize<float_type, Eigen::Sizes<n_cls, n_env>,
+                             storage_order>;
   using arrivals_type = costs_type;
   using departures_type = costs_type;
   using env_trans_mats_type =
-      Eigen::TensorFixedSize<float_type, Eigen::Sizes<n_class, n_env, n_env>>;
-
-  static constexpr auto seq_nc =
-      std::make_integer_sequence<index_type, n_class>{};
-
-  static constexpr auto states =
-      ([]<index_type... i>(std::integer_sequence<index_type, i...>) {
-        return make_set_product<class_dims[i]..., n_env*(i - i + 1)...>();
-      })(seq_nc);
-
-  static constexpr auto n_state = states.size();
-  using states_type = typename decltype(states)::value_type;
-  static constexpr auto dim_state = std::tuple_size<states_type>::value;
-
-  static constexpr auto cls_states =
-      ([]<index_type... i>(std::integer_sequence<index_type, i...>) {
-        return make_set_product<class_dims[i]...>();
-      })(seq_nc);
-
-  static constexpr auto n_cls_state = cls_states.size();
-  using cls_state_type = typename decltype(cls_states)::value_type;
-  static constexpr auto dim_cls_state = std::tuple_size<cls_state_type>::value;
-
-  static constexpr auto to_cls_state = ([]() {
-    std::array<index_type, n_state> res;
-    for (index_type i = 0; i < n_state; ++i) {
-      res[i] = i % n_cls_state;
-    }
-    return res;
-  })();
-
-  static constexpr auto env_states =
-      ([]<index_type... i>(std::integer_sequence<index_type, i...>) {
-        return make_set_product<n_env*(i - i + 1)...>();
-      })(seq_nc);
-
-  static constexpr auto n_env_state = env_states.size();
-  using env_states_type = typename decltype(env_states)::value_type;
-  static constexpr auto dim_env_state = std::tuple_size<env_states_type>::value;
-
-  static constexpr auto to_env_state = ([]() {
-    std::array<index_type, n_state> res;
-    for (index_type i = 0; i < n_state; ++i) {
-      res[i] = i / n_cls_state;
-    }
-    return res;
-  })();
-
-  using sp_vec_type = Eigen::SparseVector<float_type>;
-  using sp_vec_it = typename sp_vec_type::InnerIterator;
+      Eigen::TensorFixedSize<float_type, Eigen::Sizes<n_cls, n_env, n_env>,
+                             storage_order>;
 
   /* -------------------------- system transitions -------------------------- */
-  using cls_has_env_type = Eigen::Matrix<int, n_class, n_env>;
-  using env_state_accessible_type = Eigen::Matrix<int, n_env_state, 1>;
+  using env_state_accessible_type =
+      Eigen::Matrix<bool, 1, state::env::n, storage_order>;
 
   using trans_probs_type =
-      std::array<std::array<sp_vec_type, n_class>, n_state>;
+      std::array<std::array<sp_vec_type, n_cls>, state::sys::n>;
   using trans_dists_type =
-      std::array<std::array<std::discrete_distribution<index_type>, n_class>,
-                 n_state>;
+      std::array<std::array<std::discrete_distribution<index_type>, n_cls>,
+                 state::sys::n>;
   using action_dists_type =
-      std::array<std::discrete_distribution<index_type>, n_cls_state>;
+      std::array<std::discrete_distribution<index_type>, state::cls::n>;
 
   /* -------------------------------- rewards ------------------------------- */
 
-  using rewards_type = std::array<float_type, n_state>;
-  using reward_func_type =
-      std::function<float_type(const costs_type&, const states_type&)>;
+  using rewards_type =
+      Eigen::Matrix<float_type, 1, state::sys::n, storage_order>;
+  using reward_func_type = std::function<float_type(
+      const costs_type&, const typename state::sys::row_type&)>;
 
   /* ---------------------- class states - interactive ---------------------- */
 
-  using n_cls_visit_type = Eigen::Matrix<uint64_t, n_cls_state, n_class>;
+  using n_cls_visit_type =
+      Eigen::Matrix<uint64_t, state::cls::n, n_cls, storage_order>;
   using n_cls_trans_type =
-      std::array<std::array<tsl::robin_map<index_type, uint64_t>, n_class>,
-                 n_cls_state>;
-  using cls_cum_rewards_type = std::array<float_type, n_cls_state>;
+      std::array<std::array<tsl::robin_map<index_type, uint64_t>, n_cls>,
+                 state::cls::n>;
+  using cls_cum_rewards_type =
+      Eigen::Matrix<float_type, 1, state::cls::n, storage_order>;
 
   /* --------------------------------- train -------------------------------- */
 
-  using policy_type = Eigen::Matrix<index_type, n_cls_state, 1>;
+  using policy_type =
+      Eigen::Matrix<index_type, 1, state::cls::n, storage_order>;
 
   /* ------------------------------ q learning ------------------------------ */
 
-  using q_type = Eigen::Matrix<float_type, n_cls_state, n_class>;
-  using qs_type = std::vector<float_type>;
+  using q_type = Eigen::Matrix<float_type, state::cls::n, n_cls, storage_order>;
+  using qs_type = Eigen::Tensor<float_type, 3, storage_order>;
 
   /* ---------------------------- value iteration --------------------------- */
 
   using cls_trans_probs_type =
-      std::array<std::array<sp_vec_type, n_class>, n_cls_state>;
-  using cls_rewards_type = std::array<float_type, n_cls_state>;
+      std::array<std::array<sp_vec_type, n_cls>, state::cls::n>;
+  using cls_rewards_type =
+      Eigen::Matrix<float_type, 1, state::cls::n, storage_order>;
 
-  using v_type = Eigen::Matrix<float_type, n_cls_state, 1>;
+  using v_type = Eigen::Matrix<float_type, 1, state::cls::n, storage_order>;
 
   /* ----------------- additional precomputed probabilities ----------------- */
 
   // P(S'|S, E, a) by (S', a, S, E)
   using state_cls_trans_probs_type = std::array<
       std::array<
-          tsl::robin_map<index_type, Eigen::Matrix<float_type, 1, n_env_state>>,
-          n_class>,
-      n_cls_state>;
+          tsl::robin_map<index_type, Eigen::Matrix<float_type, 1, state::env::n,
+                                                   storage_order>>,
+          n_cls>,
+      state::cls::n>;
 
   // P(E'|E) by (E, E')
   using env_trans_probs_type =
-      Eigen::Matrix<float_type, n_env_state, n_env_state>;
+      Eigen::Matrix<float_type, state::env::n, state::env::n, storage_order>;
 
   /* --------------------------------- tilde -------------------------------- */
 
-  using t_env_probs_type = Eigen::Matrix<float_type, n_env_state, 1>;
+  using t_env_probs_type =
+      Eigen::Matrix<float_type, 1, state::env::n, storage_order>;
 
   /* ------------------------------ constructor ----------------------------- */
 
@@ -206,13 +118,13 @@ class System {
          const float_type* departures, const float_type* env_trans_mats,
          const reward_func_type& reward_func,
          const std::optional<float_type>& normalized_c = std::nullopt)
-      : costs(costs),
-        arrivals(arrivals),
-        departures(departures),
+      : costs(Eigen::TensorMap<const costs_type>(costs, n_cls, n_env)),
+        arrivals(Eigen::TensorMap<const arrivals_type>(arrivals, n_cls, n_env)),
+        departures(
+            Eigen::TensorMap<const departures_type>(departures, n_cls, n_env)),
         env_trans_mats(init_env_trans_mats(env_trans_mats)),
         normalized_c(init_normalized_c(normalized_c)),
-        cls_has_env(init_cls_has_env(env_trans_mats)),
-        env_state_accessible(init_env_state_accessible()),
+        env_state_accessible(init_env_state_accessible(env_trans_mats)),
         trans_probs(init_trans_probs()),
         trans_dists_(init_trans_dists()),
         action_dists_(init_action_dists()),
@@ -235,9 +147,17 @@ class System {
   void reset_interactive() {
     n_cls_visit_.setZero();
     n_cls_trans_.fill({});
-    cls_cum_rewards_.fill(0);
-    i_cls_trans_probs_.fill({});
-    i_cls_rewards_.fill(0);
+    cls_cum_rewards_.setZero();
+    reset_cls_trans_probs(i_cls_trans_probs_);
+    i_cls_rewards_.setZero();
+  }
+
+  void reset_cls_trans_probs(cls_trans_probs_type& t) {
+    for (size_t i = 0; i < state::cls::n; ++i) {
+      for (size_t a = 0; a < n_cls; ++a) {
+        t[i][a].resize(state::cls::n);
+      }
+    }
   }
 
   /* --------------------------- train q learning --------------------------- */
@@ -245,13 +165,13 @@ class System {
   void reset_q() {
     static constexpr auto q_inf_idx = ([]() {
       std::array<std::pair<index_type, index_type>,
-                 ((cls_states.size() / (limits_t + 1)) + ...)>
+                 ((state::cls::n / (limits_t + 1)) + ...)>
           inf_idx{};
-      index_type cur{};
-      for (index_type i = 0; i < dim_cls_state; ++i) {
-        for (index_type j = 0; j < n_cls_state; ++j) {
-          if (!cls_states[j][i]) {
-            inf_idx[cur++] = std::make_pair(j, i);
+      index_type c = 0;
+      for (index_type i = 0; i < state::cls::n; ++i) {
+        for (index_type a = 0; a < n_cls; ++a) {
+          if (!state::cls::f[i * n_cls + a]) {
+            inf_idx[c++] = std::make_pair(i, a);
           }
         }
       }
@@ -273,12 +193,16 @@ class System {
     reset_interactive();
     reset_q();
 
+    static constexpr uint64_t qs_limit = 100000000;
+    const uint64_t qs_step = std::ceil(ls / qs_limit);
+
     if constexpr (log_qs_t) {
-      qs_.resize(ls * q_.size());
+      qs_ = qs_type(std::max(ls, qs_limit) + (ls % qs_step == 0), state::cls::n,
+                    n_cls);
     }
 
     for (index_type i = 0; i < ls; ++i) {
-      const auto cls_state = to_cls_state[state_];
+      const auto cls_state = state::to_cls[state_];
 
       index_type a;
       if (q_greedy_dis_(rng) < greedy_eps) {
@@ -292,7 +216,7 @@ class System {
       step(a);
       ++n_cls_visit_(cls_state, a);
 
-      const auto next_cls_state = to_cls_state[state_];
+      const auto next_cls_state = state::to_cls[state_];
 
       const auto next_q = q_.row(next_cls_state).maxCoeff();
       q_(cls_state, a) +=
@@ -305,14 +229,21 @@ class System {
       }
 
       if constexpr (log_qs_t) {
-        std::copy(q_.data(), q_.data() + q_.size(),
-                  qs_.begin() + i * q_.size());
+        using qs_element_type = Eigen::TensorMap<Eigen::TensorFixedSize<
+            float_type, Eigen::Sizes<state::cls::n, n_cls>, storage_order>>;
+        if (!(i % qs_step)) {
+          qs_.chip<0>(i / qs_step) =
+              qs_element_type(q_.data(), state::cls::n, n_cls);
+        } else if (i == ls) {
+          qs_.chip<0>(qs_.dimension(0) - 1) =
+              qs_element_type(q_.data(), state::cls::n, n_cls);
+        }
       }
     }
 
     if constexpr (log_i_t) {
-      for (index_type i = 0; i < n_cls_state; ++i) {
-        for (index_type a = 0; a < n_class; ++a) {
+      for (index_type i = 0; i < state::cls::n; ++i) {
+        for (index_type a = 0; a < n_cls; ++a) {
           const auto n_visit = n_cls_visit_(i, a);
           for (const auto& [j, v] : n_cls_trans_[i][a]) {
             i_cls_trans_probs_[i][a].coeffRef(j) =
@@ -320,13 +251,12 @@ class System {
           }
         }
       }
-
-      for (index_type i = 0; i < n_cls_state; ++i) {
-        i_cls_rewards_[i] = cls_cum_rewards_[i] / n_cls_visit_.row(i).sum();
-      }
+      i_cls_rewards_ =
+          cls_cum_rewards_.transpose().array() /
+          n_cls_visit_.rowwise().sum().array().template cast<float_type>();
     }
 
-    for (index_type i = 0; i < n_cls_state; ++i) {
+    for (index_type i = 0; i < state::cls::n; ++i) {
       q_.row(i).maxCoeff(&q_policy_(i));
     }
   }
@@ -337,58 +267,56 @@ class System {
     if constexpr (n_env == 1) {
       train_t(0);
     }
-    static constexpr auto iota_n_cls_state = make_iota<0, n_cls_state>();
+    static constexpr auto iota_cls = make_iota<0, state::cls::n>();
 
-    v_.fill(0);
-    v_policy_.fill(0);
+    v_.setZero();
+    v_policy_.setZero();
 
     for (uint64_t i = 0; i < ls; ++i) {
       const auto v_i = v_;
-      std::for_each(std::execution::par_unseq, iota_n_cls_state.begin(),
-                    iota_n_cls_state.end(), [gamma, this, &v_i](index_type j) {
+      std::for_each(std::execution::par_unseq, iota_cls.begin(), iota_cls.end(),
+                    [gamma, this, &v_i](index_type j) {
                       update_v_i<false>(gamma, j, v_i);
                     });
     }
-    std::for_each(std::execution::par_unseq, iota_n_cls_state.begin(),
-                  iota_n_cls_state.end(), [gamma, this](index_type j) {
-                    update_v_i<true>(gamma, j, v_);
-                  });
+    std::for_each(
+        std::execution::par_unseq, iota_cls.begin(), iota_cls.end(),
+        [gamma, this](index_type j) { update_v_i<true>(gamma, j, v_); });
   }
 
   /* ------------------------------ train tilde ----------------------------- */
 
   void train_t(uint64_t ls) {
-    t_env_probs_.setConstant(static_cast<float_type>(1) / n_env_state);
-    const auto n_env_accessible = env_state_accessible.sum();
-    const auto initial_prob = static_cast<float_type>(1) / n_env_accessible;
-    for (index_type i = 0; i < n_env_state; ++i) {
+    const auto initial_prob =
+        static_cast<float_type>(1) / env_state_accessible.count();
+    for (index_type i = 0; i < state::env::n; ++i) {
       t_env_probs_[i] = env_state_accessible[i] ? initial_prob : 0;
     }
 
     for (uint64_t i = 0; i < ls; ++i) {
-      t_env_probs_ = t_env_probs_.transpose() * env_trans_probs;
+      t_env_probs_ *= env_trans_probs;
     }
 
-    t_cls_trans_probs_.fill({});
+    reset_cls_trans_probs(t_cls_trans_probs_);
 
-    for (index_type j = 0; j < n_cls_state; ++j) {
-      for (index_type a = 0; a < n_class; ++a) {
+    for (index_type j = 0; j < state::cls::n; ++j) {
+      for (index_type a = 0; a < n_cls; ++a) {
         const auto& probs = state_cls_trans_probs[j][a];
 
         for (const auto& [i, prob] : probs) {
-          const auto p_i_a_j = prob * t_env_probs_;
-          if (p_i_a_j) {
+          const auto p_i_a_j = prob.dot(t_env_probs_);
+          if (p_i_a_j > eps_v) {
             t_cls_trans_probs_[i][a].coeffRef(j) = p_i_a_j;
           }
         }
       }
     }
 
-    t_cls_rewards_.fill({});
+    t_cls_rewards_.setZero();
 
-    for (index_type i = 0; i < n_state; ++i) {
-      const auto i_cls = to_cls_state[i];
-      const auto i_env = to_env_state[i];
+    for (index_type i = 0; i < state::sys::n; ++i) {
+      const auto i_cls = state::to_cls[i];
+      const auto i_env = state::to_env[i];
       t_cls_rewards_[i_cls] += rewards[i] * t_env_probs_[i_env];
     }
   }
@@ -433,7 +361,6 @@ class System {
 
   /* -------------------- variables - system transitions -------------------- */
 
-  const cls_has_env_type cls_has_env;
   const env_state_accessible_type env_state_accessible;
   const trans_probs_type trans_probs;
 
@@ -487,9 +414,9 @@ class System {
 
   auto init_env_trans_mats(const float_type* env_trans_mats) {
     env_trans_mats_type probs = Eigen::TensorMap<const env_trans_mats_type>(
-        env_trans_mats, n_class, n_env, n_env);
+        env_trans_mats, n_cls, n_env, n_env);
 
-    for (index_type i = 0; i < n_class; ++i) {
+    for (index_type i = 0; i < n_cls; ++i) {
       for (index_type j = 0; j < n_env; ++j) {
         probs(i, j, j) = 0;
       }
@@ -500,46 +427,30 @@ class System {
 
   float_type init_normalized_c(const std::optional<float_type>& normalized_c) {
     if (normalized_c) return normalized_c.value();
-
-    static const Eigen::array<index_type, 1> sum_dims({2});
-    static const Eigen::array<index_type, 1> max_dims({1});
-
-    return Eigen::Tensor<double, 0>(
-        arrivals.rowwise().maxCoeff().sum() + departures.maxCoeff() +
-        env_trans_mats.sum(sum_dims).maximum(max_dims).sum())(0);
+    return Eigen::Tensor<float_type, 0, storage_order>(
+        arrivals.maximum(std::array{1}).sum() + departures.maximum() +
+        env_trans_mats.sum(std::array{2}).maximum(std::array{1}).sum())(0);
   }
 
-  auto init_cls_has_env(const float_type* env_trans_mats) {
-    Eigen::TensorMap<const env_trans_mats_type> mats(env_trans_mats, n_class,
-                                                     n_env, n_env);
-    cls_has_env_type cls_has_env;
-
-    static const Eigen::array<int, 1> dims({2});
-    Eigen::TensorFixedSize<float_type, Eigen::Sizes<n_class, n_env>> sums =
-        mats.sum(dims);
-    for (index_type i = 0; i < n_class; ++i) {
-      for (index_type j = 0; j < n_env; ++j) {
-        cls_has_env(i, j) = (sums(i, j) != 0);
-      }
-    }
-
-    return cls_has_env;
-  }
-
-  auto init_env_state_accessible() {
+  auto init_env_state_accessible(const float_type* env_trans_mats) {
     env_state_accessible_type res;
 
-    for (index_type i = 0; i < n_env_state; ++i) {
-      const auto& env_state_i = env_states[i];
+    Eigen::TensorMap<const env_trans_mats_type> mats(env_trans_mats, n_cls,
+                                                     n_env, n_env);
+    Eigen::TensorFixedSize<float_type, Eigen::Sizes<n_cls, n_env>,
+                           storage_order>
+        sums = mats.sum(std::array{2});
+
+    for (index_type i = 0; i < state::env::n; ++i) {
       index_type j;
 
-      for (j = 0; j < dim_env_state; ++j) {
-        if (!cls_has_env(j, env_state_i[j])) {
+      for (j = 0; j < state::env::d; ++j) {
+        if (!sums(j, state::env::a(i, j))) {
           break;
         }
       }
 
-      res[i] = (j == dim_env_state);
+      res[i] = (j == state::env::d);
     }
 
     return res;
@@ -548,46 +459,42 @@ class System {
   auto init_trans_probs() {
     trans_probs_type probs;
 
-    for (index_type i = 0; i < n_state; ++i) {
-      const auto& s_i = states[i];
+    for (index_type i = 0; i < state::sys::n; ++i) {
+      const auto& s_i = state::sys::a.row(i);
 
-      for (index_type a = 0; a < n_class; ++a) {
-        if ((to_cls_state[i] && !s_i[a]) || (!to_cls_state[i] && a)) continue;
+      for (index_type a = 0; a < n_cls; ++a) {
+        if ((state::to_cls[i] && !s_i[a]) || (!state::to_cls[i] && a)) continue;
 
         float_type dummy_prob = normalized_c;
         auto& prob_i_a = probs[i][a];
+        prob_i_a.resize(state::sys::n);
 
-        for (index_type j = 0; j < n_state; ++j) {
-          if (i == j) continue;
-
-          const auto& s_j = states[j];
-          const auto next_to =
-              can_transition_to<dim_state, n_class>(s_i, s_j, a);
+        for (index_type j = 0; j < state::sys::n; ++j) {
+          const auto& s_j = state::sys::a.row(j);
+          const auto next_to = state::next_to(s_i, s_j, a);
 
           if (next_to) {
             float_type prob;
+            const auto n = next_to.value();
 
-            const auto idx = next_to.value();
-
-            if (idx >= n_class) {
-              prob = env_trans_mats(idx - n_class, s_i[idx], s_j[idx]);
-            } else if (s_i[idx] < s_j[idx]) {
-              prob = arrivals(idx, s_i[idx + n_class]);
+            if (n >= n_cls) {
+              prob = env_trans_mats(n - n_cls, s_i[n], s_j[n]);
+            } else if (s_i[n] < s_j[n]) {
+              prob = arrivals(n, s_i[n + n_cls]);
             } else {
-              prob = departures(idx, s_i[idx + n_class]);
+              prob = departures(n, s_i[n + n_cls]);
             }
 
-            if (prob > std::numeric_limits<float_type>::epsilon()) {
+            if (prob > eps_v) {
               prob_i_a.insertBack(j) = prob;
               dummy_prob -= prob;
             }
           }
         }
 
-        if (dummy_prob > std::numeric_limits<float_type>::epsilon()) {
+        if (dummy_prob > eps_v) {
           prob_i_a.coeffRef(i) = dummy_prob;
         }
-
         prob_i_a /= normalized_c;
       }
     }
@@ -598,8 +505,8 @@ class System {
   auto init_trans_dists() {
     trans_dists_type dists;
 
-    for (index_type i = 0; i < n_state; ++i) {
-      for (index_type a = 0; a < n_class; ++a) {
+    for (index_type i = 0; i < state::sys::n; ++i) {
+      for (index_type a = 0; a < n_cls; ++a) {
         const auto& probs = trans_probs[i][a];
         const auto n_non_zero = probs.nonZeros();
         if (n_non_zero) {
@@ -614,12 +521,12 @@ class System {
 
   auto init_action_dists() {
     action_dists_type dists;
-    for (index_type i = 0; i < n_cls_state; ++i) {
-      std::array<index_type, n_class> possible_actions{};
+    for (index_type i = 0; i < state::cls::n; ++i) {
+      std::array<index_type, n_cls> possible_actions{};
 
-      for (index_type j = 0; j < n_class; ++j) {
-        if (trans_probs[i][j].nonZeros()) {
-          possible_actions[j] = 1;
+      for (index_type a = 0; a < n_cls; ++a) {
+        if (trans_probs[state::to_sys(i, 0)][a].nonZeros()) {
+          possible_actions[a] = 1;
         }
       }
 
@@ -635,8 +542,8 @@ class System {
   auto init_rewards(const reward_func_type& reward_func) {
     rewards_type rewards;
 
-    for (index_type i = 0; i < n_state; ++i) {
-      rewards[i] = reward_func(costs, states[i]);
+    for (index_type i = 0; i < state::sys::n; ++i) {
+      rewards[i] = reward_func(costs, state::sys::a.row(i));
     }
 
     return rewards;
@@ -647,20 +554,20 @@ class System {
   auto init_state_cls_trans_probs() {
     state_cls_trans_probs_type probs;
 
-    for (index_type i = 0; i < n_state; ++i) {
-      const auto i_cls = to_cls_state[i];
-      const auto i_env = to_env_state[i];
+    for (index_type i = 0; i < state::sys::n; ++i) {
+      const auto i_cls = state::to_cls[i];
+      const auto i_env = state::to_env[i];
 
-      for (index_type a = 0; a < n_class; ++a) {
+      for (index_type a = 0; a < n_cls; ++a) {
         const auto& trans_prob = trans_probs[i][a];
 
         for (sp_vec_it it(trans_prob); it; ++it) {
           const auto j = it.index();
-          const auto j_cls = to_cls_state[j];
+          const auto j_cls = state::to_cls[j];
           const auto prob = it.value();
           probs[j_cls][a]
-              .try_emplace(i_cls,
-                           Eigen::Matrix<float_type, 1, n_env_state>::Zero())
+              .try_emplace(i_cls, Eigen::Matrix<float_type, 1, state::env::n,
+                                                storage_order>::Zero())
               .first.value()[i_env] += prob;
         }
       }
@@ -673,16 +580,16 @@ class System {
     env_trans_probs_type probs;
     probs.setZero();
 
-    for (index_type i = 0; i < n_env_state; ++i) {
+    for (index_type i = 0; i < state::env::n; ++i) {
       if (!env_state_accessible[i]) {
         continue;
       }
 
-      const auto& trans_prob = trans_probs[i * n_cls_state][0];
+      const auto& trans_prob = trans_probs[state::to_sys(0, i)][0];
 
       for (sp_vec_it it(trans_prob); it; ++it) {
         const auto j = it.index();
-        const auto j_env = to_env_state[j];
+        const auto j_env = state::to_env[j];
         const auto prob = it.value();
 
         probs(i, j_env) += prob;
@@ -699,12 +606,12 @@ class System {
     float_type max_v = -inf_v;
     index_type max_a = 0;
 
-    for (index_type a = 0; a < n_class; ++a) {
+    for (index_type a = 0; a < n_cls; ++a) {
       float_type val_v = t_cls_rewards_[j];
       const auto& probs = t_cls_trans_probs_[j][a];
 
       if (!probs.nonZeros()) continue;
-      val_v += gamma * probs.transpose() * v_i;
+      val_v += gamma * probs.dot(v_i);
 
       if (max_v < val_v) {
         max_v = val_v;
