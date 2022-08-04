@@ -52,21 +52,17 @@ struct type_caster<Type> {
                          cleanup_list *) noexcept {
     if (!value.isCompressed()) return {};
 
-    auto array_type = module_::import_("scipy.sparse")
-                          .attr(IsRowMajor ? "csr_array" : "csc_array");
-    const auto outer_vec = std::array<StorageIndex, 2>{0, value.nonZeros()};
-    const auto *outer =
-        value.outerIndexPtr() ? value.outerIndexPtr() : outer_vec.data();
+    auto sp_type = module_::import_("scipy.sparse")
+                       .attr(IsRowMajor ? "csr_array" : "csc_array");
 
-    return array_type(
-               nb::make_tuple(
-                   make_return_tensor<Scalar>(value.valuePtr(),
-                                              value.nonZeros()),
-                   make_return_tensor<StorageIndex>(value.innerIndexPtr(),
-                                                    value.nonZeros()),
-                   make_return_tensor<StorageIndex>(
-                       outer, (IsRowMajor ? value.rows() : value.cols()) + 1)),
-               nb::make_tuple(value.rows(), value.cols()))
+    return sp_type(nb::make_tuple(
+                       make_return_tensor<Scalar>(value.valuePtr(),
+                                                  value.nonZeros()),
+                       make_return_tensor<StorageIndex>(value.innerIndexPtr(),
+                                                        value.nonZeros()),
+                       make_return_tensor<StorageIndex>(value.outerIndexPtr(),
+                                                        value.outerSize() + 1)),
+                   nb::make_tuple(value.rows(), value.cols()))
         .release();
   }
 };
@@ -156,8 +152,7 @@ void make_system(nb::module_ &m) {
 
   cls.def_property_readonly(
       "trans_probs",
-      [](const system_type &s)
-          -> const typename system_type::trans_probs_type & {
+      [](const system_type &s) -> const system_type::trans_probs_type & {
         return s.trans_probs;
       });
 
@@ -169,9 +164,11 @@ void make_system(nb::module_ &m) {
 
   /* ----------- variables - additional precomputed probabilities ----------- */
 
-  cls.def_property_readonly("env_trans_probs", [](const system_type &s) {
-    return make_return_tensor<float_type>(s.env_trans_probs);
-  });
+  cls.def_property_readonly(
+      "env_trans_probs",
+      [](const system_type &s) -> const system_type::env_trans_probs_type & {
+        return s.env_trans_probs;
+      });
 
   /* ---------------------- class states - interactive ---------------------- */
 
@@ -214,12 +211,11 @@ void make_system(nb::module_ &m) {
                              [](const system_type &s) {
                                return make_return_tensor<float_type>(s.qs());
                              })
-      .def_property_readonly(
-          "i_cls_trans_probs",
-          [](const system_type &s)
-              -> const typename system_type::cls_trans_probs_type & {
-            return s.i_cls_trans_probs();
-          })
+      .def_property_readonly("i_cls_trans_probs",
+                             [](const system_type &s)
+                                 -> const system_type::cls_trans_probs_type & {
+                               return s.i_cls_trans_probs();
+                             })
       .def_property_readonly("i_cls_rewards", [](const system_type &s) {
         return make_return_tensor<float_type>(s.i_cls_rewards());
       });
@@ -243,12 +239,11 @@ void make_system(nb::module_ &m) {
           [](const system_type &s) {
             return make_return_tensor<float_type>(s.t_env_probs());
           })
-      .def_property_readonly(
-          "t_cls_trans_probs",
-          [](const system_type &s)
-              -> const typename system_type::cls_trans_probs_type & {
-            return s.t_cls_trans_probs();
-          })
+      .def_property_readonly("t_cls_trans_probs",
+                             [](const system_type &s)
+                                 -> const system_type::cls_trans_probs_type & {
+                               return s.t_cls_trans_probs();
+                             })
       .def_property_readonly("t_cls_rewards", [](const system_type &s) {
         return make_return_tensor<float_type>(s.t_cls_rewards());
       });

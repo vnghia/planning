@@ -58,16 +58,8 @@ class System:
         # constexpr state types
         self.state = self._sys.state
 
-        # system transitions
-        self.trans_probs = self._sys.trans_probs
-
         # rewards
         self.rewards = self._sys.rewards
-
-        # additional precomputed probabilities
-        self.env_trans_probs = np.reshape(
-            self._sys.env_trans_probs, (len(self.state.env), len(self.state.env))
-        )
 
         # class states - interactive
         self.n_cls_visit = np.reshape(self._sys.n_cls_visit, self.interactive_shape)
@@ -80,7 +72,6 @@ class System:
         self.q = np.reshape(self._sys.q, self.interactive_shape)
         self.q_policy = np.reshape(self._sys.q_policy, self.cls_dims)
         self.qs = np.reshape(self._sys.qs, (-1,) + self.interactive_shape)
-        self.i_cls_trans_probs = self._sys.i_cls_trans_probs
         self.i_cls_rewards = self._sys.i_cls_rewards
 
         # value iteration
@@ -91,13 +82,28 @@ class System:
         # tilde
         self.train_t = self._sys.train_t
         self.t_env_probs = self._sys.t_env_probs
-        self.t_cls_trans_probs = self._sys.t_cls_trans_probs
         self.t_cls_rewards = self._sys.t_cls_rewards
 
         self.dists = []
 
     def __repr__(self):
         return self.cpp_type
+
+    @property
+    def trans_probs(self):
+        return self._sys.trans_probs
+
+    @property
+    def env_trans_probs(self):
+        return self._sys.env_trans_probs
+
+    @property
+    def i_cls_trans_probs(self):
+        return self._sys.i_cls_trans_probs
+
+    @property
+    def t_cls_trans_probs(self):
+        return self._sys.t_cls_trans_probs
 
     def show_policy(self, algo="q", info=""):
         if self.n_cls != 2:

@@ -18,8 +18,8 @@
 #include "unsupported/Eigen/CXX11/Tensor"
 
 using float_type = double;
-using sp_vec_type = Eigen::SparseVector<float_type, storage_order, index_type>;
-using sp_vec_it = typename sp_vec_type::InnerIterator;
+using sp_mat_type = Eigen::SparseMatrix<float_type, storage_order, index_type>;
+using sp_mat_it = typename sp_mat_type::InnerIterator;
 
 XoshiroCpp::Xoshiro256Plus rng;
 
@@ -49,11 +49,12 @@ class System {
   using env_state_accessible_type =
       Eigen::Matrix<bool, 1, state::env::n, storage_order>;
 
-  using trans_probs_type =
-      std::array<std::array<sp_vec_type, n_cls>, state::sys::n>;
+  using trans_probs_type = std::array<sp_mat_type, state::sys::n>;
   using trans_dists_type =
       std::array<std::array<std::discrete_distribution<index_type>, n_cls>,
                  state::sys::n>;
+  using action_masks_type =
+      Eigen::Matrix<bool, state::cls::n, n_cls, storage_order>;
   using action_dists_type =
       std::array<std::discrete_distribution<index_type>, state::cls::n>;
 
@@ -86,8 +87,7 @@ class System {
 
   /* ---------------------------- value iteration --------------------------- */
 
-  using cls_trans_probs_type =
-      std::array<std::array<sp_vec_type, n_cls>, state::cls::n>;
+  using cls_trans_probs_type = std::array<sp_mat_type, state::cls::n>;
   using cls_rewards_type =
       Eigen::Matrix<float_type, 1, state::cls::n, storage_order>;
 
@@ -96,16 +96,15 @@ class System {
   /* ----------------- additional precomputed probabilities ----------------- */
 
   // P(S'|S, E, a) by (S', a, S, E)
+  using state_cls_trans_env_prob_type =
+      Eigen::Matrix<float_type, 1, state::env::n, storage_order>;
   using state_cls_trans_probs_type = std::array<
-      std::array<
-          tsl::robin_map<index_type, Eigen::Matrix<float_type, 1, state::env::n,
-                                                   storage_order>>,
-          n_cls>,
+      std::array<tsl::robin_map<index_type, state_cls_trans_env_prob_type>,
+                 n_cls>,
       state::cls::n>;
 
   // P(E'|E) by (E, E')
-  using env_trans_probs_type =
-      Eigen::Matrix<float_type, state::env::n, state::env::n, storage_order>;
+  using env_trans_probs_type = sp_mat_type;
 
   /* --------------------------------- tilde -------------------------------- */
 
@@ -127,6 +126,7 @@ class System {
         env_state_accessible(init_env_state_accessible(env_trans_mats)),
         trans_probs(init_trans_probs()),
         trans_dists_(init_trans_dists()),
+        action_masks(init_action_masks()),
         action_dists_(init_action_dists()),
         state_cls_trans_probs(init_state_cls_trans_probs()),
         env_trans_probs(init_env_trans_probs()),
@@ -136,7 +136,9 @@ class System {
 
   void step(index_type action) {
     auto next_state_idx = trans_dists_[state_][action](rng);
-    state_ = trans_probs[state_][action].innerIndexPtr()[next_state_idx];
+    state_ = trans_probs[state_]
+                 .innerIndexPtr()[trans_probs[state_].outerIndexPtr()[action] +
+                                  next_state_idx];
   }
 
   void reset(uint64_t seed) {
@@ -153,10 +155,15 @@ class System {
   }
 
   void reset_cls_trans_probs(cls_trans_probs_type& t) {
+    static constexpr auto reserve_sizes = ([]() {
+      std::array<index_type, n_cls> sizes{};
+      sizes.fill(n_cls + 1 + 1);
+      return sizes;
+    })();
+
     for (size_t i = 0; i < state::cls::n; ++i) {
-      for (size_t a = 0; a < n_cls; ++a) {
-        t[i][a].resize(state::cls::n);
-      }
+      t[i] = sp_mat_type(n_cls, state::cls::n);
+      t[i].reserve(reserve_sizes);
     }
   }
 
@@ -246,11 +253,15 @@ class System {
         for (index_type a = 0; a < n_cls; ++a) {
           const auto n_visit = n_cls_visit_(i, a);
           for (const auto& [j, v] : n_cls_trans_[i][a]) {
-            i_cls_trans_probs_[i][a].coeffRef(j) =
+            i_cls_trans_probs_[i].insert(a, j) =
                 static_cast<float_type>(v) / n_visit;
           }
         }
       }
+      for (index_type i = 0; i < state::cls::n; ++i) {
+        i_cls_trans_probs_[i].makeCompressed();
+      }
+
       i_cls_rewards_ =
           cls_cum_rewards_.transpose().array() /
           n_cls_visit_.rowwise().sum().array().template cast<float_type>();
@@ -299,17 +310,20 @@ class System {
 
     reset_cls_trans_probs(t_cls_trans_probs_);
 
-    for (index_type j = 0; j < state::cls::n; ++j) {
-      for (index_type a = 0; a < n_cls; ++a) {
+    for (index_type a = 0; a < n_cls; ++a) {
+      for (index_type j = 0; j < state::cls::n; ++j) {
         const auto& probs = state_cls_trans_probs[j][a];
 
         for (const auto& [i, prob] : probs) {
           const auto p_i_a_j = prob.dot(t_env_probs_);
           if (p_i_a_j > eps_v) {
-            t_cls_trans_probs_[i][a].coeffRef(j) = p_i_a_j;
+            t_cls_trans_probs_[i].insert(a, j) = p_i_a_j;
           }
         }
       }
+    }
+    for (index_type i = 0; i < state::cls::n; ++i) {
+      t_cls_trans_probs_[i].makeCompressed();
     }
 
     t_cls_rewards_.setZero();
@@ -363,6 +377,7 @@ class System {
 
   const env_state_accessible_type env_state_accessible;
   const trans_probs_type trans_probs;
+  const action_masks_type action_masks;
 
   /* -------------------------- variables - rewards ------------------------- */
 
@@ -458,16 +473,22 @@ class System {
 
   auto init_trans_probs() {
     trans_probs_type probs;
+    static constexpr auto reserve_sizes = ([]() {
+      std::array<index_type, n_cls> sizes{};
+      sizes.fill(n_cls + 1 + n_cls * (n_env - 1) + 1);
+      return sizes;
+    })();
 
     for (index_type i = 0; i < state::sys::n; ++i) {
       const auto& s_i = state::sys::a.row(i);
+
+      auto prob_i = sp_mat_type(n_cls, state::sys::n);
+      prob_i.reserve(reserve_sizes);
 
       for (index_type a = 0; a < n_cls; ++a) {
         if ((state::to_cls[i] && !s_i[a]) || (!state::to_cls[i] && a)) continue;
 
         float_type dummy_prob = normalized_c;
-        auto& prob_i_a = probs[i][a];
-        prob_i_a.resize(state::sys::n);
 
         for (index_type j = 0; j < state::sys::n; ++j) {
           const auto& s_j = state::sys::a.row(j);
@@ -486,17 +507,20 @@ class System {
             }
 
             if (prob > eps_v) {
-              prob_i_a.insertBack(j) = prob;
+              prob_i.insert(a, j) = prob;
               dummy_prob -= prob;
             }
           }
         }
 
         if (dummy_prob > eps_v) {
-          prob_i_a.coeffRef(i) = dummy_prob;
+          prob_i.insert(a, i) = dummy_prob;
         }
-        prob_i_a /= normalized_c;
       }
+
+      prob_i.makeCompressed();
+      prob_i /= normalized_c;
+      probs[i] = std::move(prob_i);
     }
 
     return probs;
@@ -506,12 +530,14 @@ class System {
     trans_dists_type dists;
 
     for (index_type i = 0; i < state::sys::n; ++i) {
+      const auto& prob_i = trans_probs[i];
+
       for (index_type a = 0; a < n_cls; ++a) {
-        const auto& probs = trans_probs[i][a];
-        const auto n_non_zero = probs.nonZeros();
-        if (n_non_zero) {
+        const auto start = prob_i.outerIndexPtr()[a];
+        const auto end = prob_i.outerIndexPtr()[a + 1];
+        if (start != end) {
           dists[i][a] = std::discrete_distribution<index_type>(
-              probs.valuePtr(), probs.valuePtr() + n_non_zero);
+              prob_i.valuePtr() + start, prob_i.valuePtr() + end);
         }
       }
     }
@@ -519,19 +545,23 @@ class System {
     return dists;
   }
 
+  auto init_action_masks() {
+    action_masks_type masks;
+    for (index_type i = 0; i < state::cls::n; ++i) {
+      const auto& prob_i = trans_probs[state::to_sys(i, 0)];
+      masks.row(i) =
+          (prob_i * Eigen::Matrix<float_type, state::cls::n, 1>::Ones())
+              .template cast<bool>();
+    }
+    return masks;
+  }
+
   auto init_action_dists() {
     action_dists_type dists;
+
     for (index_type i = 0; i < state::cls::n; ++i) {
-      std::array<index_type, n_cls> possible_actions{};
-
-      for (index_type a = 0; a < n_cls; ++a) {
-        if (trans_probs[state::to_sys(i, 0)][a].nonZeros()) {
-          possible_actions[a] = 1;
-        }
-      }
-
       dists[i] = std::discrete_distribution<index_type>(
-          possible_actions.begin(), possible_actions.end());
+          action_masks.row(i).begin(), action_masks.row(i).end());
     }
 
     return dists;
@@ -555,16 +585,16 @@ class System {
     state_cls_trans_probs_type probs;
 
     for (index_type i = 0; i < state::sys::n; ++i) {
+      const auto& prob_i = trans_probs[i];
       const auto i_cls = state::to_cls[i];
       const auto i_env = state::to_env[i];
 
       for (index_type a = 0; a < n_cls; ++a) {
-        const auto& trans_prob = trans_probs[i][a];
-
-        for (sp_vec_it it(trans_prob); it; ++it) {
+        for (sp_mat_it it(prob_i, a); it; ++it) {
           const auto j = it.index();
           const auto j_cls = state::to_cls[j];
           const auto prob = it.value();
+
           probs[j_cls][a]
               .try_emplace(i_cls, Eigen::Matrix<float_type, 1, state::env::n,
                                                 storage_order>::Zero())
@@ -577,24 +607,30 @@ class System {
   }
 
   auto init_env_trans_probs() {
-    env_trans_probs_type probs;
-    probs.setZero();
+    env_trans_probs_type probs = sp_mat_type(state::env::n, state::env::n);
+    static constexpr auto reserve_sizes = ([]() {
+      std::array<index_type, state::env::n> sizes{};
+      sizes.fill(n_cls * (n_env - 1) + 1);
+      return sizes;
+    })();
+    probs.reserve(reserve_sizes);
 
     for (index_type i = 0; i < state::env::n; ++i) {
       if (!env_state_accessible[i]) {
         continue;
       }
 
-      const auto& trans_prob = trans_probs[state::to_sys(0, i)][0];
+      const auto& prob_i = trans_probs[state::to_sys(0, i)];
 
-      for (sp_vec_it it(trans_prob); it; ++it) {
+      for (sp_mat_it it(prob_i, 0); it; ++it) {
         const auto j = it.index();
         const auto j_env = state::to_env[j];
         const auto prob = it.value();
 
-        probs(i, j_env) += prob;
+        probs.coeffRef(i, j_env) += prob;
       }
     }
+    probs.makeCompressed();
 
     return probs;
   }
@@ -603,23 +639,13 @@ class System {
 
   template <bool update_policy_t>
   void update_v_i(float_type gamma, index_type j, const v_type& v_i) {
-    float_type max_v = -inf_v;
-    index_type max_a = 0;
-
-    for (index_type a = 0; a < n_cls; ++a) {
-      float_type val_v = t_cls_rewards_[j];
-      const auto& probs = t_cls_trans_probs_[j][a];
-
-      if (!probs.nonZeros()) continue;
-      val_v += gamma * probs.dot(v_i);
-
-      if (max_v < val_v) {
-        max_v = val_v;
-        if constexpr (update_policy_t) {
-          max_a = a;
-        }
-      }
-    }
+    index_type max_a;
+    const auto& prob_j = t_cls_trans_probs_[j];
+    const auto max_v =
+        t_cls_rewards_[j] +
+        gamma * action_masks.row(j)
+                    .select(v_i * prob_j.transpose(), v_type::Constant(-inf_v))
+                    .maxCoeff(&max_a);
 
     if constexpr (update_policy_t) {
       v_policy_[j] = max_a;
