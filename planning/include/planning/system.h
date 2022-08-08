@@ -3,15 +3,20 @@
 #include <array>
 #include <cmath>
 #include <execution>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <optional>
 #include <random>
+#include <sstream>
+#include <string>
 #include <tuple>
 #include <utility>
 
 #include "Eigen/Dense"
 #include "Eigen/SparseCore"
+#include "cereal/access.hpp"
+#include "planning/serialize.h"
 #include "planning/state.h"
 #include "planning/xoshiro.h"
 #include "tsl/robin_map.h"
@@ -22,6 +27,36 @@ using sp_mat_type = Eigen::SparseMatrix<float_type, storage_order, index_type>;
 using sp_mat_it = typename sp_mat_type::InnerIterator;
 
 XoshiroCpp::Xoshiro256Plus rng;
+
+namespace std {
+
+bool operator==(const sp_mat_type& lhs, const sp_mat_type& rhs) {
+  return (lhs.isCompressed() == rhs.isCompressed()) &&
+         (lhs.rows() == rhs.rows()) && (lhs.cols() == rhs.cols()) &&
+         (lhs.nonZeros() == rhs.nonZeros()) &&
+         std::equal(lhs.innerIndexPtr(), lhs.innerIndexPtr() + lhs.nonZeros(),
+                    rhs.innerIndexPtr()) &&
+         std::equal(lhs.outerIndexPtr(),
+                    lhs.outerIndexPtr() + lhs.outerSize() + 1,
+                    rhs.outerIndexPtr()) &&
+         std::equal(lhs.valuePtr(), lhs.valuePtr() + lhs.nonZeros(),
+                    rhs.valuePtr()) &&
+         (lhs.isCompressed() ||
+          std::equal(lhs.innerNonZeroPtr(),
+                     lhs.innerNonZeroPtr() + lhs.outerSize(),
+                     rhs.innerNonZeroPtr()));
+}
+
+}  // namespace std
+
+bool operator==(const sp_mat_type& lhs, const sp_mat_type& rhs) {
+  return std::operator==(lhs, rhs);
+}
+
+template <typename XprType>
+typename XprType::Scalar to_scalar(const XprType& xpr) {
+  return Eigen::Tensor<typename XprType::Scalar, 0, storage_order>(xpr)(0);
+}
 
 template <index_type n_env_t, index_type... limits_t>
 class System {
@@ -84,6 +119,7 @@ class System {
 
   using q_type = Eigen::Matrix<float_type, state::cls::n, n_cls, storage_order>;
   using qs_type = Eigen::Tensor<float_type, 3, storage_order>;
+  using q_greedy_dis_type = std::uniform_real_distribution<float_type>;
 
   /* ---------------------------- value iteration --------------------------- */
 
@@ -365,13 +401,75 @@ class System {
   }
   const cls_rewards_type& t_cls_rewards() const { return t_cls_rewards_; }
 
+  /* ----------------------------- serialization ---------------------------- */
+
+  void to_stream(std::ostream& os) const {
+    cereal::BinaryOutputArchive ar(os);
+    ar(*this);
+  }
+
+  static System from_stream(std::istream& is) {
+    System sys;
+    cereal::BinaryInputArchive ar(is);
+    ar(sys);
+    return sys;
+  }
+
+  void to_file(const std::string& path) const {
+    std::ofstream os(path, std::ios::binary);
+    to_stream(os);
+  }
+
+  static System from_file(const std::string& path) {
+    std::ifstream is(path, std::ios::binary);
+    return from_stream(is);
+  }
+
+  std::string to_str() const {
+    std::stringstream os;
+    to_stream(os);
+    return os.str();
+  }
+
+  static System from_str(const std::string& str) {
+    std::stringstream is(str);
+    return from_stream(is);
+  }
+
+  bool operator==(const System& other) const {
+    return to_scalar((costs == other.costs).all()) &&
+           to_scalar((arrivals == other.arrivals).all()) &&
+           to_scalar((departures == other.departures).all()) &&
+           to_scalar((env_trans_mats == other.env_trans_mats).all()) &&
+           (normalized_c == other.normalized_c) &&
+           (env_state_accessible == other.env_state_accessible) &&
+           (trans_probs == other.trans_probs) &&
+           (action_masks == other.action_masks) && (rewards == other.rewards) &&
+           (state_cls_trans_probs == other.state_cls_trans_probs) &&
+           (env_trans_probs == other.env_trans_probs) &&
+           (trans_dists_ == other.trans_dists_) &&
+           (action_dists_ == other.action_dists_) && (state_ == other.state_) &&
+           (n_cls_visit_ == other.n_cls_visit_) &&
+           (n_cls_trans_ == other.n_cls_trans_) &&
+           (cls_cum_rewards_ == other.cls_cum_rewards_) &&
+           (i_cls_trans_probs_ == other.i_cls_trans_probs_) &&
+           (i_cls_rewards_ == other.i_cls_rewards_) && (q_ == other.q_) &&
+           to_scalar((qs_ == other.qs_).all()) &&
+           (q_policy_ == other.q_policy_) &&
+           (q_greedy_dis_ == other.q_greedy_dis_) && (v_ == other.v_) &&
+           (v_policy_ == other.v_policy_) &&
+           (t_env_probs_ == other.t_env_probs_) &&
+           (t_cls_trans_probs_ == other.t_cls_trans_probs_) &&
+           (t_cls_rewards_ == other.t_cls_rewards_);
+  }
+
   /* --------------------- variable - system parameters --------------------- */
 
   const costs_type costs;
   const arrivals_type arrivals;
   const departures_type departures;
   const env_trans_mats_type env_trans_mats;
-  const float_type normalized_c;
+  const float_type normalized_c = 0;
 
   /* -------------------- variables - system transitions -------------------- */
 
@@ -389,6 +487,8 @@ class System {
   const env_trans_probs_type env_trans_probs;
 
  private:
+  friend class cereal::access;
+
   /* -------------------- variables - system transitions -------------------- */
 
   trans_dists_type trans_dists_;
@@ -412,7 +512,7 @@ class System {
   qs_type qs_;
   policy_type q_policy_;
 
-  std::uniform_real_distribution<float_type> q_greedy_dis_;
+  q_greedy_dis_type q_greedy_dis_;
 
   /* ---------------------------- value iteration --------------------------- */
 
@@ -424,6 +524,110 @@ class System {
   t_env_probs_type t_env_probs_;
   cls_trans_probs_type t_cls_trans_probs_;
   cls_rewards_type t_cls_rewards_;
+
+  /* ----------------------------- serialization ---------------------------- */
+
+  System() {}
+
+  System(costs_type&& costs, arrivals_type&& arrivals,
+         departures_type&& departures, env_trans_mats_type&& env_trans_mats,
+         float_type&& normalized_c,
+         env_state_accessible_type&& env_state_accessible,
+         trans_probs_type&& trans_probs, action_masks_type&& action_masks,
+         rewards_type&& rewards,
+         state_cls_trans_probs_type&& state_cls_trans_probs,
+         env_trans_probs_type&& env_trans_probs, index_type&& state,
+         n_cls_visit_type&& n_cls_visit, n_cls_trans_type&& n_cls_trans,
+         cls_cum_rewards_type&& cls_cum_rewards,
+         cls_trans_probs_type&& i_cls_trans_probs,
+         cls_rewards_type&& i_cls_rewards, q_type&& q, qs_type&& qs,
+         policy_type&& q_policy, v_type&& v, policy_type&& v_policy,
+         t_env_probs_type&& t_env_probs,
+         cls_trans_probs_type&& t_cls_trans_probs,
+         cls_rewards_type&& t_cls_rewards)
+      : costs(costs),
+        arrivals(arrivals),
+        departures(departures),
+        env_trans_mats(env_trans_mats),
+        normalized_c(normalized_c),
+        env_state_accessible(env_state_accessible),
+        trans_probs(trans_probs),
+        action_masks(action_masks),
+        rewards(rewards),
+        state_cls_trans_probs(state_cls_trans_probs),
+        env_trans_probs(env_trans_probs),
+        trans_dists_(init_trans_dists()),
+        action_dists_(init_action_dists()),
+        state_(state),
+        n_cls_visit_(n_cls_visit),
+        n_cls_trans_(n_cls_trans),
+        cls_cum_rewards_(cls_cum_rewards),
+        i_cls_trans_probs_(i_cls_trans_probs),
+        i_cls_rewards_(i_cls_rewards),
+        q_(q),
+        qs_(qs),
+        q_policy_(q_policy),
+        v_(v),
+        v_policy_(v_policy),
+        t_env_probs_(t_env_probs),
+        t_cls_trans_probs_(t_cls_trans_probs),
+        t_cls_rewards_(t_cls_rewards) {}
+
+  void save(cereal::BinaryOutputArchive& ar) const {
+    ar(costs, arrivals, departures, env_trans_mats, normalized_c,
+       env_state_accessible, trans_probs, action_masks, rewards,
+       state_cls_trans_probs, env_trans_probs, state_, n_cls_visit_,
+       n_cls_trans_, cls_cum_rewards_, i_cls_trans_probs_, i_cls_rewards_, q_,
+       qs_, q_policy_, v_, v_policy_, t_env_probs_, t_cls_trans_probs_,
+       t_cls_rewards_);
+  }
+
+  void load(cereal::BinaryInputArchive& ar) {
+    costs_type costs;
+    arrivals_type arrivals;
+    departures_type departures;
+    env_trans_mats_type env_trans_mats;
+    float_type normalized_c;
+    env_state_accessible_type env_state_accessible;
+    trans_probs_type trans_probs;
+    action_masks_type action_masks;
+    rewards_type rewards;
+    state_cls_trans_probs_type state_cls_trans_probs;
+    env_trans_probs_type env_trans_probs;
+    index_type state;
+    n_cls_visit_type n_cls_visit;
+    n_cls_trans_type n_cls_trans;
+    cls_cum_rewards_type cls_cum_rewards;
+    cls_trans_probs_type i_cls_trans_probs;
+    cls_rewards_type i_cls_rewards;
+    q_type q;
+    qs_type qs;
+    policy_type q_policy;
+    v_type v;
+    policy_type v_policy;
+    t_env_probs_type t_env_probs;
+    cls_trans_probs_type t_cls_trans_probs;
+    cls_rewards_type t_cls_rewards;
+
+    ar(costs, arrivals, departures, env_trans_mats, normalized_c,
+       env_state_accessible, trans_probs, action_masks, rewards,
+       state_cls_trans_probs, env_trans_probs, state, n_cls_visit, n_cls_trans,
+       cls_cum_rewards, i_cls_trans_probs, i_cls_rewards, q, qs, q_policy, v,
+       v_policy, t_env_probs, t_cls_trans_probs, t_cls_rewards);
+
+    new (this)
+        System(std::move(costs), std::move(arrivals), std::move(departures),
+               std::move(env_trans_mats), std::move(normalized_c),
+               std::move(env_state_accessible), std::move(trans_probs),
+               std::move(action_masks), std::move(rewards),
+               std::move(state_cls_trans_probs), std::move(env_trans_probs),
+               std::move(state), std::move(n_cls_visit), std::move(n_cls_trans),
+               std::move(cls_cum_rewards), std::move(i_cls_trans_probs),
+               std::move(i_cls_rewards), std::move(q), std::move(qs),
+               std::move(q_policy), std::move(v), std::move(v_policy),
+               std::move(t_env_probs), std::move(t_cls_trans_probs),
+               std::move(t_cls_rewards));
+  }
 
   /* ------------------ init functions - system transitions ----------------- */
 
@@ -442,9 +646,9 @@ class System {
 
   float_type init_normalized_c(const std::optional<float_type>& normalized_c) {
     if (normalized_c) return normalized_c.value();
-    return Eigen::Tensor<float_type, 0, storage_order>(
+    return to_scalar(
         arrivals.maximum(std::array{1}).sum() + departures.maximum() +
-        env_trans_mats.sum(std::array{2}).maximum(std::array{1}).sum())(0);
+        env_trans_mats.sum(std::array{2}).maximum(std::array{1}).sum());
   }
 
   auto init_env_state_accessible(const float_type* env_trans_mats) {

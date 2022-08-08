@@ -5,10 +5,8 @@
 #include <utility>
 
 #include "Eigen/Dense"
+#include "planning/config.h"
 #include "unsupported/Eigen/CXX11/Tensor"
-
-using index_type = Eigen::Index;
-static constexpr auto storage_order = Eigen::RowMajor;
 
 template <index_type begin, index_type end>
 static constexpr auto make_iota() {

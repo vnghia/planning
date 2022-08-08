@@ -11,43 +11,43 @@ from planning.planning_ext import Reward
 class System:
     def __init__(
         self,
+        n_env,
         limits,
-        costs,
-        arrivals,
-        departures,
+        costs=None,
+        arrivals=None,
+        departures=None,
         env_trans_mats=None,
         reward_type=None,
+        sys=None,
         **kwargs,
     ):
         # init
         self.limits = limits
+        self.n_env = n_env
         self.n_cls = len(self.limits)
-
-        self.costs = np.array(costs).reshape((self.n_cls, -1))
-        self.n_env = self.costs.shape[1]
-
-        self.arrivals = np.array(arrivals).reshape((self.n_cls, self.n_env))
-        self.departures = np.array(departures).reshape((self.n_cls, self.n_env))
-
-        self.env_trans_mats = (
-            np.array(env_trans_mats).reshape((self.n_cls, self.n_env, self.n_env))
-            if self.n_env > 1
-            else np.ones((self.n_cls, 1, 1))
-        )
-
         self.reward_type = reward_type or Reward.linear_2
-        self.kwargs = kwargs
 
-        self.cpp_type = f"system_{self.n_env}_{self.limits[0]}_{self.limits[1]}"
+        if sys:
+            self._sys = sys
+        else:
+            dtype = planning_ext.float_type().dtype
+            env_trans_mats = (
+                env_trans_mats if self.n_env > 1 else np.ones((self.n_cls, 1, 1))
+            )
+            self._sys = self.__get_cpp_type(n_env, limits)(
+                np.asarray(costs, dtype=dtype),
+                np.asarray(arrivals, dtype=dtype),
+                np.asarray(departures, dtype=dtype),
+                np.asarray(env_trans_mats, dtype=dtype),
+                self.reward_type,
+                **kwargs,
+            )
 
-        self._sys = vars(planning_ext)[self.cpp_type](
-            self.costs,
-            self.arrivals,
-            self.departures,
-            self.env_trans_mats,
-            self.reward_type,
-            **self.kwargs,
-        )
+        # params
+        self.costs = self._sys.costs
+        self.arrivals = self._sys.arrivals
+        self.departures = self._sys.departures
+        self.env_trans_mats = self._sys.env_trans_mats
 
         # dimensions
 
@@ -84,10 +84,20 @@ class System:
         self.t_env_probs = self._sys.t_env_probs
         self.t_cls_rewards = self._sys.t_cls_rewards
 
+        # serialization
+        self.to_file = self._sys.to_file
+        self.to_str = self._sys.to_str
+
         self.dists = []
 
+    @classmethod
+    def __get_cpp_type(_, n_env, limits):
+        return vars(planning_ext)[
+            f"system_{n_env}_" + "_".join([str(i) for i in limits])
+        ]
+
     def __repr__(self):
-        return self.cpp_type
+        return repr(self._sys)
 
     @property
     def trans_probs(self):
@@ -104,6 +114,18 @@ class System:
     @property
     def t_cls_trans_probs(self):
         return self._sys.t_cls_trans_probs
+
+    @classmethod
+    def from_file(cls, path, n_env, limits, **kwargs):
+        cpp_type = cls.__get_cpp_type(n_env, limits)
+        sys = cpp_type.from_file(path)
+        return cls(n_env, limits, sys=sys, **kwargs)
+
+    @classmethod
+    def from_str(cls, content, n_env, limits, **kwargs):
+        cpp_type = cls.__get_cpp_type(n_env, limits)
+        sys = cpp_type.from_str(content)
+        return cls(n_env, limits, sys=sys, **kwargs)
 
     def show_policy(self, algo="q", info=""):
         if self.n_cls != 2:

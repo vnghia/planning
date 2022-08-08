@@ -8,6 +8,7 @@
 #include "Eigen/SparseCore"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/pair.h"
+#include "nanobind/stl/string.h"
 #include "nanobind/stl/vector.h"
 #include "nanobind/tensor.h"
 
@@ -16,6 +17,7 @@ namespace nb = nanobind;
 using namespace nb::literals;
 
 template <typename data_type, typename... size_types>
+requires std::is_scalar_v<data_type>
 static constexpr auto make_return_tensor(const data_type *data,
                                          size_types... sizes) {
   constexpr auto n_dim = sizeof...(sizes);
@@ -24,12 +26,19 @@ static constexpr auto make_return_tensor(const data_type *data,
                                           dims);
 }
 
-template <typename data_type>
 static constexpr auto make_return_tensor(const auto &v) {
-  return make_return_tensor<data_type>(v.data(), static_cast<size_t>(v.size()));
+  return make_return_tensor(v.data(), static_cast<size_t>(v.size()));
 }
 
 namespace nanobind {
+
+struct bytes : std::string {
+  using std::string::string;
+
+  bytes(const std::string &str) : std::string(str) {}
+  bytes(std::string &&str) : std::string(str) {}
+};
+
 namespace detail {
 
 template <typename Type, size_t N>
@@ -55,15 +64,36 @@ struct type_caster<Type> {
     auto sp_type = module_::import_("scipy.sparse")
                        .attr(IsRowMajor ? "csr_array" : "csc_array");
 
-    return sp_type(nb::make_tuple(
-                       make_return_tensor<Scalar>(value.valuePtr(),
-                                                  value.nonZeros()),
-                       make_return_tensor<StorageIndex>(value.innerIndexPtr(),
-                                                        value.nonZeros()),
-                       make_return_tensor<StorageIndex>(value.outerIndexPtr(),
-                                                        value.outerSize() + 1)),
-                   nb::make_tuple(value.rows(), value.cols()))
+    return sp_type(
+               nb::make_tuple(
+                   make_return_tensor(value.valuePtr(), value.nonZeros()),
+                   make_return_tensor(value.innerIndexPtr(), value.nonZeros()),
+                   make_return_tensor(value.outerIndexPtr(),
+                                      value.outerSize() + 1)),
+               nb::make_tuple(value.rows(), value.cols()))
         .release();
+  }
+};
+
+template <>
+struct type_caster<bytes> {
+  NB_TYPE_CASTER(bytes, (const_name("bytes")));
+
+  bool from_python(handle src, uint8_t, cleanup_list *) noexcept {
+    Py_ssize_t size;
+    char *str;
+    const int status = PyBytes_AsStringAndSize(src.ptr(), &str, &size);
+    if (status == -1) {
+      PyErr_Clear();
+      return false;
+    }
+    value = bytes(str, (size_t)size);
+    return true;
+  }
+
+  static handle from_cpp(const bytes &value, rv_policy,
+                         cleanup_list *) noexcept {
+    return PyBytes_FromStringAndSize(value.c_str(), value.size());
   }
 };
 
@@ -124,28 +154,57 @@ void make_system(nb::module_ &m) {
 
   cls.def("__init__", init);
 
+  /* -------------------------------- params -------------------------------- */
+
+  cls.def_property_readonly("costs",
+                            [](const system_type &s) {
+                              return make_return_tensor(s.costs.data(),
+                                                        system_type::n_cls,
+                                                        system_type::n_env);
+                            })
+      .def_property_readonly("arrivals",
+                             [](const system_type &s) {
+                               return make_return_tensor(s.arrivals.data(),
+                                                         system_type::n_cls,
+                                                         system_type::n_env);
+                             })
+      .def_property_readonly("departures",
+                             [](const system_type &s) {
+                               return make_return_tensor(s.departures.data(),
+                                                         system_type::n_cls,
+                                                         system_type::n_env);
+                             })
+      .def_property_readonly("env_trans_mats",
+                             [](const system_type &s) {
+                               return make_return_tensor(
+                                   s.env_trans_mats.data(), system_type::n_cls,
+                                   system_type::n_env, system_type::n_env);
+                             })
+      .def_property_readonly(
+          "normalized_c", [](const system_type &s) { return s.normalized_c; });
+
   /* ------------------------- constexpr state types ------------------------ */
 
   auto state = nb::class_<typename system_type::state>(cls, "state");
   state
       .def_property_readonly_static("cls",
                                     [](const py_type &) {
-                                      return make_return_tensor<index_type>(
+                                      return make_return_tensor(
                                           system_type::state::cls::f.data(),
                                           system_type::state::cls::n,
                                           system_type::state::cls::d);
                                     })
       .def_property_readonly_static("env",
                                     [](const py_type &) {
-                                      return make_return_tensor<index_type>(
+                                      return make_return_tensor(
                                           system_type::state::env::f.data(),
                                           system_type::state::env::n,
                                           system_type::state::env::d);
                                     })
       .def_property_readonly_static("sys", [](const py_type &) {
-        return make_return_tensor<index_type>(system_type::state::sys::f.data(),
-                                              system_type::state::sys::n,
-                                              system_type::state::sys::d);
+        return make_return_tensor(system_type::state::sys::f.data(),
+                                  system_type::state::sys::n,
+                                  system_type::state::sys::d);
       });
 
   /* -------------------- variables - system transitions -------------------- */
@@ -159,7 +218,7 @@ void make_system(nb::module_ &m) {
   /* -------------------------- variables - rewards ------------------------- */
 
   cls.def_property_readonly("rewards", [](const system_type &s) {
-    return make_return_tensor<float_type>(s.rewards);
+    return make_return_tensor(s.rewards);
   });
 
   /* ----------- variables - additional precomputed probabilities ----------- */
@@ -173,7 +232,7 @@ void make_system(nb::module_ &m) {
   /* ---------------------- class states - interactive ---------------------- */
 
   cls.def_property_readonly("n_cls_visit", [](const system_type &s) {
-    return make_return_tensor<uint64_t>(s.n_cls_visit());
+    return make_return_tensor(s.n_cls_visit());
   });
 
   /* ------------------------------ q learning ------------------------------ */
@@ -198,54 +257,57 @@ void make_system(nb::module_ &m) {
               uint64_t ls, uint64_t seed) {
              s.template train_q<true, true>(gamma, greedy_eps, ls, seed);
            })
-      .def_property_readonly("q",
-                             [](const system_type &s) {
-                               return make_return_tensor<float_type>(s.q());
-                             })
+      .def_property_readonly(
+          "q", [](const system_type &s) { return make_return_tensor(s.q()); })
       .def_property_readonly(
           "q_policy",
-          [](const system_type &s) {
-            return make_return_tensor<index_type>(s.q_policy());
-          })
-      .def_property_readonly("qs",
-                             [](const system_type &s) {
-                               return make_return_tensor<float_type>(s.qs());
-                             })
+          [](const system_type &s) { return make_return_tensor(s.q_policy()); })
+      .def_property_readonly(
+          "qs", [](const system_type &s) { return make_return_tensor(s.qs()); })
       .def_property_readonly("i_cls_trans_probs",
                              [](const system_type &s)
                                  -> const system_type::cls_trans_probs_type & {
                                return s.i_cls_trans_probs();
                              })
       .def_property_readonly("i_cls_rewards", [](const system_type &s) {
-        return make_return_tensor<float_type>(s.i_cls_rewards());
+        return make_return_tensor(s.i_cls_rewards());
       });
 
   /* ---------------------------- value iteration --------------------------- */
 
   cls.def("train_v", &system_type::train_v)
-      .def_property_readonly("v",
-                             [](const system_type &s) {
-                               return make_return_tensor<float_type>(s.v());
-                             })
+      .def_property_readonly(
+          "v", [](const system_type &s) { return make_return_tensor(s.v()); })
       .def_property_readonly("v_policy", [](const system_type &s) {
-        return make_return_tensor<index_type>(s.v_policy());
+        return make_return_tensor(s.v_policy());
       });
 
   /* --------------------------------- tilde -------------------------------- */
 
   cls.def("train_t", &system_type::train_t)
-      .def_property_readonly(
-          "t_env_probs",
-          [](const system_type &s) {
-            return make_return_tensor<float_type>(s.t_env_probs());
-          })
+      .def_property_readonly("t_env_probs",
+                             [](const system_type &s) {
+                               return make_return_tensor(s.t_env_probs());
+                             })
       .def_property_readonly("t_cls_trans_probs",
                              [](const system_type &s)
                                  -> const system_type::cls_trans_probs_type & {
                                return s.t_cls_trans_probs();
                              })
       .def_property_readonly("t_cls_rewards", [](const system_type &s) {
-        return make_return_tensor<float_type>(s.t_cls_rewards());
+        return make_return_tensor(s.t_cls_rewards());
+      });
+
+  /* ------------------------------- serialize ------------------------------ */
+
+  cls.def("to_file", &system_type::to_file)
+      .def_static("from_file", &system_type::from_file)
+      .def("to_str", [](const system_type &s) { return nb::bytes(s.to_str()); })
+      .def_static(
+          "from_str",
+          [](const nb::bytes &str) { return system_type::from_str(str); })
+      .def("__eq__", [](const system_type &s, const system_type &other) {
+        return s == other;
       });
 }
 
@@ -272,6 +334,10 @@ void make_system_2(nb::module_ &m) {
 }
 
 NB_MODULE(planning_ext, m) {
+  m.def("float_type", []() {
+    return make_return_tensor<float_type>(nullptr, 0);
+  });
+
   nb::enum_<Reward>(m, "Reward")
       .value("linear_2", Reward::linear_2)
       .value("convex_2", Reward::convex_2);
