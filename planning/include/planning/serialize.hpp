@@ -8,7 +8,6 @@
 #include "cereal/cereal.hpp"
 #include "cereal/types/array.hpp"
 #include "cereal/types/utility.hpp"
-#include "tsl/robin_map.h"
 
 namespace cereal {
 
@@ -124,26 +123,6 @@ void load(Archive &ar, Eigen::TensorBase<Derived> &t) {
   }
 
   ar(binary_data(d.data(), size * sizeof(typename Derived::Scalar)));
-}
-
-template <class Archive, class Key, class T>
-struct specialize<Archive, tsl::robin_map<Key, T>,
-                  cereal::specialization::non_member_load_save> {};
-
-template <class Archive, class Key, class T>
-void save(Archive &ar, const tsl::robin_map<Key, T> &map) {
-  auto serializer = [&ar](const auto &v) { ar &v; };
-  map.serialize(serializer);
-}
-
-template <class Archive, class Key, class T>
-void load(Archive &ar, tsl::robin_map<Key, T> &map) {
-  auto deserializer = [&ar]<typename U>() {
-    U u;
-    ar &u;
-    return u;
-  };
-  map = tsl::robin_map<Key, T>::deserialize(deserializer);
 }
 
 }  // namespace cereal

@@ -9,7 +9,6 @@
 #include "Eigen/SparseCore"
 #include "planning/config.hpp"
 #include "planning/state.hpp"
-#include "tsl/robin_map.h"
 #include "unsupported/Eigen/CXX11/Tensor"
 
 using reward_func_type = std::function<float_type(
@@ -18,8 +17,6 @@ using SpMats = std::vector<SpMat>;
 using SpMatU64 = Eigen::SparseMatrix<uint64_t, storage_order, index_type>;
 using SpMatU64s = std::vector<SpMatU64>;
 using dists_type = std::vector<std::discrete_distribution<index_type>>;
-using state_cls_trans_probs_type =
-    std::vector<tsl::robin_map<index_type, VectorMF>>;
 
 class System {
  public:
@@ -50,7 +47,7 @@ class System {
   const ArrayB action_masks;
 
   // P(S'|S, E, a) by ((S', a), S, E)
-  const state_cls_trans_probs_type state_cls_trans_probs;
+  const SpMats state_cls_trans_probs;
 
   // P(E'|E) by (E, E')
   const SpMat env_trans_probs;
@@ -144,8 +141,7 @@ class System {
          Tensor2F&& departures, Tensor3F&& env_trans_mats,
          float_type&& normalize_c, VectorAF&& rewards,
          VectorAB&& env_state_accessible, SpMats&& trans_probs,
-         ArrayB&& action_masks,
-         state_cls_trans_probs_type&& state_cls_trans_probs,
+         ArrayB&& action_masks, SpMats&& state_cls_trans_probs,
          SpMat&& env_trans_probs, VectorAS&& cls_dims,
          VectorAS&& cls_action_dims, index_type&& state_,
          ArrayU64&& n_cls_visit_, SpMatU64s&& n_cls_trans_,

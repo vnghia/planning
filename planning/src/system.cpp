@@ -154,20 +154,26 @@ System::System(const index_type n_env, const VectorAI& limits,
         return masks;
       })()),
       state_cls_trans_probs(([this]() {
-        state_cls_trans_probs_type res(states.cls.n * n_cls);
+        SpMats res(states.cls.n * n_cls);
+        std::vector<std::vector<Eigen::Triplet<float_type>>> triplets(
+            states.cls.n * n_cls);
         for (index_type i = 0; i < states.sys.n; ++i) {
-          const auto& prob_i = trans_probs[i];
+          const auto& prob = trans_probs[i];
           const auto i_cls = states.to_cls[i];
           const auto i_env = states.to_env[i];
           for (index_type a = 0; a < n_cls; ++a) {
-            for (SpMatIt it(prob_i, a); it; ++it) {
-              const auto j = it.index();
-              const auto j_cls = states.to_cls[j];
-              const auto prob = it.value();
-              res[states.to_cls_action(j_cls, a)]
-                  .try_emplace(i_cls, VectorMF::Zero(states.env.n))
-                  .first.value()[i_env] += prob;
+            for (SpMatIt it(prob, a); it; ++it) {
+              triplets[states.to_cls_action(states.to_cls[it.index()], a)]
+                  .emplace_back(i_cls, i_env, it.value());
             }
+          }
+        }
+        for (index_type i = 0; i < states.cls.n; ++i) {
+          for (index_type a = 0; a < n_cls; ++a) {
+            const auto j = states.to_cls_action(i, a);
+            res[j] = SpMat(states.cls.n, states.env.n);
+            res[j].setFromTriplets(triplets[j].begin(), triplets[j].end());
+            res[j].makeCompressed();
           }
         }
         return res;
@@ -447,12 +453,14 @@ void System::train_t() {
 
   for (index_type a = 0; a < n_cls; ++a) {
     for (index_type j = 0; j < states.cls.n; ++j) {
-      const auto& probs = state_cls_trans_probs[states.to_cls_action(j, a)];
-
-      for (const auto& [i, prob] : probs) {
-        const auto p_i_a_j = prob.dot(t_env_probs_);
-        if (p_i_a_j > eps_v) {
-          t_cls_trans_probs_[i].insert(a, j) = p_i_a_j;
+      const auto& prob = state_cls_trans_probs[states.to_cls_action(j, a)];
+      for (index_type i = 0; i < states.cls.n; ++i) {
+        const auto& row = prob.row(i);
+        if (row.nonZeros()) {
+          const auto p_i_a_j = row.dot(t_env_probs_);
+          if (p_i_a_j > eps_v) {
+            t_cls_trans_probs_[i].insert(a, j) = p_i_a_j;
+          }
         }
       }
     }
@@ -483,7 +491,7 @@ bool System::operator==(const System& other) const {
   dbg(sps_equal(trans_probs, other.trans_probs));
   dbg((action_masks == other.action_masks).all());
   dbg((rewards == other.rewards).all());
-  dbg((state_cls_trans_probs == other.state_cls_trans_probs));
+  dbg(sps_equal(state_cls_trans_probs, other.state_cls_trans_probs));
   dbg((env_trans_probs == other.env_trans_probs));
   dbg((cls_dims == other.cls_dims).all());
   dbg((cls_action_dims == other.cls_action_dims).all());
@@ -505,7 +513,7 @@ bool System::operator==(const System& other) const {
          sps_equal(trans_probs, other.trans_probs) &&
          (action_masks == other.action_masks).all() &&
          (rewards == other.rewards).all() &&
-         (state_cls_trans_probs == other.state_cls_trans_probs) &&
+         sps_equal(state_cls_trans_probs, other.state_cls_trans_probs) &&
          (env_trans_probs == other.env_trans_probs) &&
          (cls_dims == other.cls_dims).all() &&
          (cls_action_dims == other.cls_action_dims).all() &&
@@ -530,8 +538,7 @@ System::System(index_type&& n_env, VectorAI&& limits, State&& states,
                Tensor2F&& departures, Tensor3F&& env_trans_mats,
                float_type&& normalized_c, VectorAF&& rewards,
                VectorAB&& env_state_accessible, SpMats&& trans_probs,
-               ArrayB&& action_masks,
-               state_cls_trans_probs_type&& state_cls_trans_probs,
+               ArrayB&& action_masks, SpMats&& state_cls_trans_probs,
                SpMat&& env_trans_probs, VectorAS&& cls_dims,
                VectorAS&& cls_action_dims, index_type&& state_,
                ArrayU64&& n_cls_visit_, SpMatU64s&& n_cls_trans_,
@@ -603,7 +610,7 @@ void System::load(cereal::BinaryInputArchive& ar) {
 
   ArrayB action_masks;
 
-  state_cls_trans_probs_type state_cls_trans_probs;
+  SpMats state_cls_trans_probs;
 
   SpMat env_trans_probs;
 
