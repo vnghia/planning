@@ -7,125 +7,44 @@ from matplotlib import colors
 from planning import planning_ext
 from planning.planning_ext import Reward
 
+index_type = planning_ext.index_type().dtype
+float_type = planning_ext.float_type().dtype
 
-class System:
-    def __init__(
-        self,
+
+class System(planning_ext.System):
+    def __init__(self, *nargs, **kwargs):
+        super().__init__(*nargs, **kwargs)
+
+    @classmethod
+    def new(
+        cls,
         n_env,
         limits,
-        costs=None,
-        arrivals=None,
-        departures=None,
-        env_trans_mats=None,
-        reward_type=None,
-        sys=None,
+        costs,
+        arrivals,
+        departures,
+        env_trans_mats,
+        reward_type=Reward.linear_2,
         **kwargs,
     ):
-        # init
-        self.limits = limits
-        self.n_env = n_env
-        self.n_cls = len(self.limits)
-        self.reward_type = reward_type or Reward.linear_2
-
-        if sys:
-            self._sys = sys
-        else:
-            dtype = planning_ext.float_type().dtype
-            env_trans_mats = (
-                env_trans_mats if self.n_env > 1 else np.ones((self.n_cls, 1, 1))
-            )
-            self._sys = self.__get_cpp_type(n_env, limits)(
-                np.asarray(costs, dtype=dtype),
-                np.asarray(arrivals, dtype=dtype),
-                np.asarray(departures, dtype=dtype),
-                np.asarray(env_trans_mats, dtype=dtype),
-                self.reward_type,
-                **kwargs,
-            )
-
-        # params
-        self.costs = self._sys.costs
-        self.arrivals = self._sys.arrivals
-        self.departures = self._sys.departures
-        self.env_trans_mats = self._sys.env_trans_mats
-
-        # dimensions
-
-        self.cls_dims = tuple(np.array(self.limits) + 1)
-        self.env_dims = (self.n_env,) * self.n_cls
-        self.interactive_shape = self.cls_dims + (self.n_cls,)
-
-        # constexpr state types
-        self.state = self._sys.state
-
-        # rewards
-        self.rewards = self._sys.rewards
-
-        # class states - interactive
-        self.n_cls_visit = np.reshape(self._sys.n_cls_visit, self.interactive_shape)
-
-        # q learning
-        self.train_q = self._sys.train_q
-        self.train_q_i = self._sys.train_q_i
-        self.train_q_qs = self._sys.train_q_qs
-        self.train_q_full = self._sys.train_q_full
-        self.q = np.reshape(self._sys.q, self.interactive_shape)
-        self.q_policy = np.reshape(self._sys.q_policy, self.cls_dims)
-        self.qs = np.reshape(self._sys.qs, (-1,) + self.interactive_shape)
-        self.i_cls_rewards = self._sys.i_cls_rewards
-
-        # value iteration
-        self.train_v = self._sys.train_v
-        self.v = np.reshape(self._sys.v, self.cls_dims)
-        self.v_policy = np.reshape(self._sys.v_policy, self.cls_dims)
-
-        # tilde
-        self.train_t = self._sys.train_t
-        self.t_env_probs = self._sys.t_env_probs
-        self.t_cls_rewards = self._sys.t_cls_rewards
-
-        # serialization
-        self.to_file = self._sys.to_file
-        self.to_str = self._sys.to_str
-
-        self.dists = []
+        return cls(
+            n_env,
+            np.asarray(limits, dtype=index_type),
+            np.asarray(costs, dtype=float_type),
+            np.asarray(arrivals, dtype=float_type),
+            np.asarray(departures, dtype=float_type),
+            np.asarray(env_trans_mats, dtype=float_type),
+            reward_type,
+            **kwargs,
+        )
 
     @classmethod
-    def __get_cpp_type(_, n_env, limits):
-        return vars(planning_ext)[
-            f"system_{n_env}_" + "_".join([str(i) for i in limits])
-        ]
-
-    def __repr__(self):
-        return repr(self._sys)
-
-    @property
-    def trans_probs(self):
-        return self._sys.trans_probs
-
-    @property
-    def env_trans_probs(self):
-        return self._sys.env_trans_probs
-
-    @property
-    def i_cls_trans_probs(self):
-        return self._sys.i_cls_trans_probs
-
-    @property
-    def t_cls_trans_probs(self):
-        return self._sys.t_cls_trans_probs
+    def from_file(cls, path):
+        return cls(super().from_file(path))
 
     @classmethod
-    def from_file(cls, path, n_env, limits, **kwargs):
-        cpp_type = cls.__get_cpp_type(n_env, limits)
-        sys = cpp_type.from_file(path)
-        return cls(n_env, limits, sys=sys, **kwargs)
-
-    @classmethod
-    def from_str(cls, content, n_env, limits, **kwargs):
-        cpp_type = cls.__get_cpp_type(n_env, limits)
-        sys = cpp_type.from_str(content)
-        return cls(n_env, limits, sys=sys, **kwargs)
+    def from_str(cls, content):
+        return cls(super().from_str(content))
 
     def show_policy(self, algo="q", info=""):
         if self.n_cls != 2:
@@ -163,28 +82,6 @@ class System:
                 l2 = index[1] if index and len(index) > 1 else j
                 plt.title(f"L1 = {l1} - L2 = {l2}{info}")
                 plt.show()
-
-    def show_ratio(self, info=""):
-        if self.n_cls != 2:
-            return
-
-        ax = plt.axes()
-        x1 = np.linspace(0, self.limits[0], 100)
-        y1 = x1
-        x2 = np.linspace(0, self.limits[1], 100)
-        y2 = x2
-        if self.reward_type == Reward.convex_2:
-            y2 = x2**2
-
-        for i in range(self.n_env):
-            r1 = self.costs[0, i] / self.departures[0, i]
-            r2 = self.costs[1, i] / self.departures[1, i]
-            ax.plot(x1, r1 * y1, label=f"env {i} ratio 0")
-            ax.plot(x2, r2 * y2, label=f"env {i} ratio 1")
-
-        ax.legend()
-        ax.set_title(f"ratio{info}")
-        plt.show()
 
     def show_n_cls_visit(self, info=""):
         if self.n_cls != 2:
@@ -271,25 +168,3 @@ class System:
 
         fig.update_layout(title_text=info)
         fig.show()
-
-    def distance_trans_probs(self):
-        self.dists = []
-        for i in range(len(self.state.cls)):
-            self.dists.append([])
-            for a in range(self.n_cls):
-                self.dists[i].append(
-                    np.abs(
-                        self.i_cls_trans_probs[i][a].values
-                        - self.t_cls_trans_probs[i][a].values
-                    )
-                )
-        return self.dists
-
-    def max_distance_trans_probs(self):
-        self.distance_trans_probs()
-        return np.max(
-            [
-                np.max([np.max(d) if np.size(d) != 0 else 0 for d in dist])
-                for dist in self.dists
-            ]
-        )

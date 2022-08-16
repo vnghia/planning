@@ -8,8 +8,6 @@
 #include "cereal/cereal.hpp"
 #include "cereal/types/array.hpp"
 #include "cereal/types/utility.hpp"
-#include "planning/config.h"
-#include "planning/state.h"
 #include "tsl/robin_map.h"
 
 namespace cereal {
