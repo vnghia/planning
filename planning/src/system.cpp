@@ -406,12 +406,19 @@ void System::train_q_full(float_type gamma, float_type greedy_eps, uint64_t ls,
 template <bool update_policy_t>
 void System::update_v(float_type gamma, index_type i, const MatrixF& old_v) {
   index_type max_a;
+  float_type max_v;
   const auto& prob = t_cls_trans_probs_[i];
-  const auto max_v =
-      t_cls_rewards_[i] + gamma * action_masks.row(i)
-                                      .select(old_v * prob.transpose(),
-                                              VectorAF::Constant(n_cls, -inf_v))
-                                      .maxCoeff(&max_a);
+
+  const VectorAF new_a = action_masks.row(i).select(
+      old_v * prob.transpose(), VectorAF::Constant(n_cls, -inf_v));
+  const VectorAF new_v = t_cls_rewards_[i] + gamma * new_a;
+
+  if ((new_v == VectorAF::Constant(n_cls, new_v(0))).all()) {
+    max_v = new_v(0);
+    max_a = n_cls;
+  } else {
+    max_v = new_v.maxCoeff(&max_a);
+  }
 
   if constexpr (update_policy_t) {
     v_policy_[i] = max_a;
@@ -478,30 +485,6 @@ void System::train_t() {
 }
 
 bool System::operator==(const System& other) const {
-  dbg(n_env == other.n_env);
-  dbg((limits == other.limits).all());
-  dbg(states == other.states);
-  dbg(n_cls == other.n_cls);
-  dbg(to_scalar((costs == other.costs).all()));
-  dbg(to_scalar((arrivals == other.arrivals).all()));
-  dbg(to_scalar((departures == other.departures).all()));
-  dbg(to_scalar((env_trans_mats == other.env_trans_mats).all()));
-  dbg(normalized_c == other.normalized_c);
-  dbg((env_state_accessible == other.env_state_accessible).all());
-  dbg(sps_equal(trans_probs, other.trans_probs));
-  dbg((action_masks == other.action_masks).all());
-  dbg((rewards == other.rewards).all());
-  dbg(sps_equal(state_cls_trans_probs, other.state_cls_trans_probs));
-  dbg((env_trans_probs == other.env_trans_probs));
-  dbg((cls_dims == other.cls_dims).all());
-  dbg((cls_action_dims == other.cls_action_dims).all());
-  dbg((trans_dists_ == other.trans_dists_));
-  dbg((action_dists_ == other.action_dists_));
-  dbg((state_ == other.state_));
-  dbg((n_cls_visit_ == other.n_cls_visit_).all());
-  dbg(sps_equal(n_cls_trans_, other.n_cls_trans_));
-  dbg((cls_cum_rewards_ == other.cls_cum_rewards_).all());
-  dbg(sps_equal(i_cls_trans_probs_, other.i_cls_trans_probs_));
   return (n_env == other.n_env) && (limits == other.limits).all() &&
          (states == other.states) && (n_cls == other.n_cls) &&
          to_scalar((costs == other.costs).all()) &&
