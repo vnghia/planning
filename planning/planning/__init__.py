@@ -70,6 +70,9 @@ class System(planning_ext.System):
         plt.show()
 
     def show_qs(self, index=None, info=""):
+        if self.n_cls != 2:
+            return
+
         qs = self.qs.transpose(1, 2, 3, 0)
         qs = qs if index is None else qs[index]
         qs.shape = (1,) * (4 - qs.ndim) + qs.shape
@@ -80,7 +83,7 @@ class System(planning_ext.System):
                 plt.legend()
                 l1 = index[0] if index else i
                 l2 = index[1] if index and len(index) > 1 else j
-                plt.title(f"L1 = {l1} - L2 = {l2}{info}")
+                plt.title(f"L1 = {l1} & L2 = {l2}{info}")
                 plt.show()
 
     def show_n_cls_visit(self, info=""):

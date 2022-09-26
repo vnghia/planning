@@ -315,12 +315,12 @@ void System::train_q_impl(float_type gamma, float_type greedy_eps, uint64_t ls,
   reset_i();
   reset_q();
 
-  static constexpr uint64_t qs_limit = 100000000;
-  const uint64_t qs_step = std::ceil(ls / qs_limit);
+  static constexpr uint64_t qs_limit = 10000000;
+  const uint64_t qs_step = std::ceil(ls / static_cast<float_type>(qs_limit));
 
   if constexpr (log_qs_t) {
-    qs_ = Tensor3F(std::max(ls, qs_limit) + (ls % qs_step == 0), states.cls.n,
-                   n_cls);
+    qs_ = Tensor3F(std::min(ls, qs_limit) + (ls % qs_step == 0 && qs_step != 1),
+                   states.cls.n, n_cls);
   }
 
   for (index_type i = 0; i < ls; ++i) {

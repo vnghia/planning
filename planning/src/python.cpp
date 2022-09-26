@@ -254,7 +254,14 @@ void make_system(nb::module_ &m) {
                              })
       .def_property_readonly(
           "qs",
-          [](const System &self) { return make_return_tensor(self.qs()); })
+          [](const System &self) {
+            const auto qs_dims = (VectorAS(self.cls_action_dims.size() + 1)
+                                      << self.qs().dimension(0),
+                                  self.cls_action_dims)
+                                     .finished();
+            return make_return_tensor(self.qs().data(), qs_dims.data(),
+                                      qs_dims.size());
+          })
       .def_property_readonly("i_cls_trans_probs",
                              [](const System &self) -> const SpMats & {
                                return self.i_cls_trans_probs();
