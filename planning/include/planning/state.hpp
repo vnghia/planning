@@ -39,9 +39,9 @@ class State {
 
   const VectorAI cls_dims;
 
-  const CartesianProduct cls;
-  const CartesianProduct env;
-  const CartesianProduct sys;
+  const CartesianProduct cls{};
+  const CartesianProduct env{};
+  const CartesianProduct sys{};
 
   const VectorAI lin_spaced;
 

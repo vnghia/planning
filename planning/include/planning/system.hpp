@@ -29,7 +29,7 @@ class System {
 
   const index_type n_env{};
   const VectorAI limits;
-  const State states;
+  const State states{};
   const index_type n_cls{};
 
   const Tensor2F costs;
@@ -42,12 +42,12 @@ class System {
 
   const VectorAB env_state_accessible;
 
-  const SpMats trans_probs;
+  const SpMats trans_probs{};
 
   const ArrayB action_masks;
 
   // P(S'|S, E, a) by ((S', a), S, E)
-  const SpMats state_cls_trans_probs;
+  const SpMats state_cls_trans_probs{};
 
   // P(E'|E) by (E, E')
   const SpMat env_trans_probs;

@@ -33,7 +33,7 @@ template <class Archive, class Derived>
 requires is_input_binary_serializable<Archive, typename Derived::Scalar>
 void load(Archive &ar, Eigen::PlainObjectBase<Derived> &m) {
   using DenseType = Eigen::PlainObjectBase<Derived>;
-  using Index = Derived::Index;
+  using Index = typename Derived::Index;
 
   Index rows = DenseType::RowsAtCompileTime;
   Index cols = DenseType::ColsAtCompileTime;
@@ -65,7 +65,7 @@ requires is_input_binary_serializable<Archive, typename Derived::Scalar>
 void load(Archive &ar, Eigen::SparseCompressedBase<Derived> &m) {
   using SparseType = Eigen::SparseCompressedBase<Derived>;
   using StorageIndex = typename SparseType::StorageIndex;
-  using Index = Derived::Index;
+  using Index = typename Derived::Index;
 
   Index rows;
   Index cols;
