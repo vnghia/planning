@@ -370,12 +370,14 @@ void System::train_q_impl(float_type gamma, float_type greedy_eps, uint64_t ls,
                 .template cast<float_type>();
       }
     }
-    for (index_type i = 0; i < states.cls.n; ++i) {
-      i_cls_trans_probs_[i].makeCompressed();
-    }
 
     i_cls_rewards_ = cls_cum_rewards_.transpose() /
                      n_cls_visit_.rowwise().sum().template cast<float_type>();
+  }
+
+  for (index_type i = 0; i < states.cls.n; ++i) {
+    n_cls_trans_[i].makeCompressed();
+    i_cls_trans_probs_[i].makeCompressed();
   }
 
   for (index_type i = 0; i < states.cls.n; ++i) {
