@@ -63,9 +63,9 @@ index_type State::to_sys_action(index_type i, index_type a) const {
   return i * n_cls + a;
 }
 
-std::optional<index_type> State::next_to(const ConstRowXprAI& s1,
-                                         const ConstRowXprAI& s2,
-                                         index_type a) const {
+std::optional<index_type> State::next_to_up(const ConstRowXprAI& s1,
+                                            const ConstRowXprAI& s2,
+                                            index_type a) const {
   const auto diff = s2 - s1;
   if (diff.count() != 1) {
     return std::nullopt;
@@ -73,6 +73,22 @@ std::optional<index_type> State::next_to(const ConstRowXprAI& s1,
   for (index_type i = 0; i < sys.d; ++i) {
     if (diff(i) &&
         ((i >= n_cls) || ((diff(i) == -1 && a == i) || diff(i) == 1))) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<index_type> State::next_to_down(const ConstRowXprAI& s1,
+                                              const ConstRowXprAI& s2,
+                                              index_type a) const {
+  const auto diff = s2 - s1;
+  if (diff.count() != 1) {
+    return std::nullopt;
+  }
+  for (index_type i = 0; i < sys.d; ++i) {
+    if (diff(i) &&
+        ((i >= n_cls) || ((diff(i) == 1 && a == i) || diff(i) == -1))) {
       return i;
     }
   }

@@ -1,4 +1,4 @@
-#include "planning/system.hpp"
+#include "planning/loadbalance.hpp"
 
 #include <algorithm>
 #include <execution>
@@ -6,6 +6,8 @@
 #include <limits>
 #include <numeric>
 #include <sstream>
+
+#include "planning/xoshiro.hpp"
 
 template <typename Derived>
 bool operator==(const Eigen::SparseCompressedBase<Derived>& lhs,
@@ -38,17 +40,18 @@ bool sps_equal(const std::vector<Derived>& lhs,
                     });
 }
 
-System::System(const index_type n_env, const VectorAI& limits,
-               const float_type* costs, const float_type* arrivals,
-               const float_type* departures, const float_type* env_trans_mats,
-               const reward_func_type& reward_func,
-               const std::optional<float_type>& normalized_c)
+LoadBalance::LoadBalance(const index_type n_env, const VectorAI& limits,
+                         const float_type* costs, const float_type* arrivals,
+                         const float_type* departures,
+                         const float_type* env_trans_mats,
+                         const reward_func_type& reward_func,
+                         const std::optional<float_type>& normalized_c)
     : n_env(n_env),
       limits(limits),
       states(n_env, limits),
       n_cls(states.n_cls),
       costs(Eigen::TensorMap<const Tensor2F>(costs, n_cls, n_env)),
-      arrivals(Eigen::TensorMap<const Tensor2F>(arrivals, n_cls, n_env)),
+      arrivals(Eigen::TensorMap<const Tensor2F>(arrivals, 1, 1)),
       departures(Eigen::TensorMap<const Tensor2F>(departures, n_cls, n_env)),
       env_trans_mats(([this, env_trans_mats]() {
         {
@@ -65,8 +68,8 @@ System::System(const index_type n_env, const VectorAI& limits,
       normalized_c(([this, normalized_c]() {
         {
           if (normalized_c) return normalized_c.value();
-          return to_scalar(this->arrivals.maximum(std::array{1}).sum() +
-                           this->departures.maximum() +
+          return to_scalar(this->arrivals.maximum() +
+                           this->departures.maximum(std::array{1}).sum() +
                            this->env_trans_mats.sum(std::array{2})
                                .maximum(std::array{1})
                                .sum());
@@ -104,19 +107,20 @@ System::System(const index_type n_env, const VectorAI& limits,
           prob_i.reserve(VectorAI::Constant(
               n_cls, n_cls + 1 + n_cls * (this->n_env - 1) + 1));
           for (index_type a = 0; a < n_cls; ++a) {
-            if ((states.to_cls(i) && !s_i(a)) || (!states.to_cls(i) && a))
+            if ((states.to_cls(i) != states.cls.n - 1) &&
+                s_i(a) == this->limits(a))
               continue;
             float_type dummy_prob = this->normalized_c;
             for (index_type j = 0; j < states.sys.n; ++j) {
               const auto& s_j = states.sys.a.row(j);
-              const auto next_to = states.next_to_up(s_i, s_j, a);
+              const auto next_to = states.next_to_down(s_i, s_j, a);
               if (next_to) {
                 float_type prob;
                 const auto n = next_to.value();
                 if (n >= n_cls) {
                   prob = this->env_trans_mats(n - n_cls, s_i(n), s_j[n]);
                 } else if (s_i[n] < s_j[n]) {
-                  prob = this->arrivals(n, s_i(n + n_cls));
+                  prob = this->arrivals(0, 0);
                 } else {
                   prob = this->departures(n, s_i(n + n_cls));
                 }
@@ -218,7 +222,7 @@ System::System(const index_type n_env, const VectorAI& limits,
   t_cls_rewards_.setZero();
 }
 
-dists_type System::init_trans_dists() const {
+dists_type LoadBalance::init_trans_dists() const {
   dists_type res(states.sys.n * n_cls);
   for (index_type i = 0; i < states.sys.n; ++i) {
     const auto& prob_i = trans_probs[i];
@@ -235,7 +239,7 @@ dists_type System::init_trans_dists() const {
   return res;
 }
 
-dists_type System::init_action_dists() const {
+dists_type LoadBalance::init_action_dists() const {
   dists_type res(states.sys.n);
   for (index_type i = 0; i < states.cls.n; ++i) {
     res[i] = std::discrete_distribution<index_type>(action_masks.row(i).begin(),
@@ -244,19 +248,19 @@ dists_type System::init_action_dists() const {
   return res;
 }
 
-void System::step(index_type action) {
+void LoadBalance::step(index_type action) {
   auto next_state_idx = trans_dists_[states.to_sys_action(state_, action)](rng);
   state_ = trans_probs[state_]
                .innerIndexPtr()[trans_probs[state_].outerIndexPtr()[action] +
                                 next_state_idx];
 }
 
-void System::reset(uint64_t seed) {
+void LoadBalance::reset(uint64_t seed) {
   rng = decltype(rng)(seed);
   state_ = 0;
 }
 
-void System::reset_i() {
+void LoadBalance::reset_i() {
   n_cls_visit_.setZero();
   for (size_t i = 0; i < states.cls.n; ++i) {
     n_cls_trans_[i] = SpMatU64(n_cls, states.cls.n);
@@ -267,32 +271,31 @@ void System::reset_i() {
   i_cls_rewards_.setZero();
 }
 
-void System::reset_cls_trans_probs(SpMats& mats) const {
+void LoadBalance::reset_cls_trans_probs(SpMats& mats) const {
   for (size_t i = 0; i < states.cls.n; ++i) {
     mats[i] = SpMat(n_cls, states.cls.n);
     mats[i].reserve(VectorAI::Constant(n_cls, n_cls + 1 + 1));
   }
 }
 
-void System::reset_q() {
+void LoadBalance::reset_q() {
   q_.setZero();
   for (index_type i = 0; i < states.cls.n; ++i) {
     for (index_type a = 0; a < n_cls; ++a) {
-      if (!states.cls.a(i, a)) {
+      if (!action_masks(i, a)) {
         q_(i, a) = -inf_v;
       }
     }
   }
-  q_(0, 0) = 0;
   q_policy_.setZero();
 }
 
-void System::reset_v() {
+void LoadBalance::reset_v() {
   v_.setZero();
   v_policy_.setZero();
 }
 
-void System::reset_t() {
+void LoadBalance::reset_t() {
   t_env_probs_ = env_state_accessible.select(
       VectorAF::Constant(states.env.n, static_cast<float_type>(1) /
                                            env_state_accessible.count()),
@@ -302,8 +305,8 @@ void System::reset_t() {
 }
 
 template <bool log_i_t, bool log_qs_t>
-void System::train_q_impl(float_type gamma, float_type greedy_eps, uint64_t ls,
-                          uint64_t seed) {
+void LoadBalance::train_q_impl(float_type gamma, float_type greedy_eps,
+                               uint64_t ls, uint64_t seed) {
   reset(seed);
   reset_i();
   reset_q();
@@ -378,28 +381,29 @@ void System::train_q_impl(float_type gamma, float_type greedy_eps, uint64_t ls,
   }
 }
 
-void System::train_q(float_type gamma, float_type greedy_eps, uint64_t ls,
-                     uint64_t seed) {
+void LoadBalance::train_q(float_type gamma, float_type greedy_eps, uint64_t ls,
+                          uint64_t seed) {
   train_q_impl<false, false>(gamma, greedy_eps, ls, seed);
 }
 
-void System::train_q_i(float_type gamma, float_type greedy_eps, uint64_t ls,
-                       uint64_t seed) {
+void LoadBalance::train_q_i(float_type gamma, float_type greedy_eps,
+                            uint64_t ls, uint64_t seed) {
   train_q_impl<true, false>(gamma, greedy_eps, ls, seed);
 }
 
-void System::train_qs(float_type gamma, float_type greedy_eps, uint64_t ls,
-                      uint64_t seed) {
+void LoadBalance::train_qs(float_type gamma, float_type greedy_eps, uint64_t ls,
+                           uint64_t seed) {
   train_q_impl<false, true>(gamma, greedy_eps, ls, seed);
 }
 
-void System::train_q_full(float_type gamma, float_type greedy_eps, uint64_t ls,
-                          uint64_t seed) {
+void LoadBalance::train_q_full(float_type gamma, float_type greedy_eps,
+                               uint64_t ls, uint64_t seed) {
   train_q_impl<true, true>(gamma, greedy_eps, ls, seed);
 }
 
 template <bool update_policy_t>
-void System::update_v(float_type gamma, index_type i, const MatrixF& old_v) {
+void LoadBalance::update_v(float_type gamma, index_type i,
+                           const MatrixF& old_v) {
   index_type max_a;
   float_type max_v;
   const auto& prob = t_cls_trans_probs_[i];
@@ -422,7 +426,7 @@ void System::update_v(float_type gamma, index_type i, const MatrixF& old_v) {
   }
 }
 
-void System::train_v(float_type gamma) {
+void LoadBalance::train_v(float_type gamma) {
   reset_v();
   train_t();
 
@@ -444,7 +448,7 @@ void System::train_v(float_type gamma) {
                 [gamma, this](index_type i) { update_v<true>(gamma, i, v_); });
 }
 
-void System::train_t() {
+void LoadBalance::train_t() {
   reset_t();
 
   VectorMF old_t_env_probs_ = VectorMF::Constant(states.env.n, inf_v);
@@ -479,7 +483,7 @@ void System::train_t() {
   }
 }
 
-bool System::operator==(const System& other) const {
+bool LoadBalance::operator==(const LoadBalance& other) const {
   return (n_env == other.n_env) && (limits == other.limits).all() &&
          (states == other.states) && (n_cls == other.n_cls) &&
          to_scalar((costs == other.costs).all()) &&
@@ -511,20 +515,19 @@ bool System::operator==(const System& other) const {
          (t_cls_rewards_ == other.t_cls_rewards_).all();
 }
 
-System::System(index_type&& n_env, VectorAI&& limits, State&& states,
-               index_type&& n_cls, Tensor2F&& costs, Tensor2F&& arrivals,
-               Tensor2F&& departures, Tensor3F&& env_trans_mats,
-               float_type&& normalized_c, VectorAF&& rewards,
-               VectorAB&& env_state_accessible, SpMats&& trans_probs,
-               ArrayB&& action_masks, SpMats&& state_cls_trans_probs,
-               SpMat&& env_trans_probs, VectorAS&& cls_dims,
-               VectorAS&& cls_action_dims, index_type&& state_,
-               ArrayU64&& n_cls_visit_, SpMatU64s&& n_cls_trans_,
-               VectorAF&& cls_cum_rewards_, SpMats&& i_cls_trans_probs_,
-               VectorAF&& i_cls_rewards_, ArrayF&& q_, Tensor3F&& qs_,
-               VectorAI&& q_policy_, VectorMF&& v_, VectorAI&& v_policy_,
-               VectorMF&& t_env_probs_, SpMats&& t_cls_trans_probs_,
-               VectorAF&& t_cls_rewards_)
+LoadBalance::LoadBalance(
+    index_type&& n_env, VectorAI&& limits, State&& states, index_type&& n_cls,
+    Tensor2F&& costs, Tensor2F&& arrivals, Tensor2F&& departures,
+    Tensor3F&& env_trans_mats, float_type&& normalized_c, VectorAF&& rewards,
+    VectorAB&& env_state_accessible, SpMats&& trans_probs,
+    ArrayB&& action_masks, SpMats&& state_cls_trans_probs,
+    SpMat&& env_trans_probs, VectorAS&& cls_dims, VectorAS&& cls_action_dims,
+    index_type&& state_, ArrayU64&& n_cls_visit_, SpMatU64s&& n_cls_trans_,
+    VectorAF&& cls_cum_rewards_, SpMats&& i_cls_trans_probs_,
+    VectorAF&& i_cls_rewards_, ArrayF&& q_, Tensor3F&& qs_,
+    VectorAI&& q_policy_, VectorMF&& v_, VectorAI&& v_policy_,
+    VectorMF&& t_env_probs_, SpMats&& t_cls_trans_probs_,
+    VectorAF&& t_cls_rewards_)
     : n_env(n_env),
       limits(limits),
       states(states),
@@ -559,7 +562,7 @@ System::System(index_type&& n_env, VectorAI&& limits, State&& states,
       t_cls_trans_probs_(t_cls_trans_probs_),
       t_cls_rewards_(t_cls_rewards_) {}
 
-void System::save(cereal::BinaryOutputArchive& ar) const {
+void LoadBalance::save(cereal::BinaryOutputArchive& ar) const {
   ar(n_env, limits, states, n_cls, costs, arrivals, departures, env_trans_mats,
      normalized_c, rewards, env_state_accessible, trans_probs, action_masks,
      state_cls_trans_probs, env_trans_probs, cls_dims, cls_action_dims, state_,
@@ -568,7 +571,7 @@ void System::save(cereal::BinaryOutputArchive& ar) const {
      t_cls_trans_probs_, t_cls_rewards_);
 }
 
-void System::load(cereal::BinaryInputArchive& ar) {
+void LoadBalance::load(cereal::BinaryInputArchive& ar) {
   index_type n_env;
   VectorAI limits;
   State states;
@@ -621,7 +624,7 @@ void System::load(cereal::BinaryInputArchive& ar) {
      i_cls_rewards_, q_, qs_, q_policy_, v_, v_policy_, t_env_probs_,
      t_cls_trans_probs_, t_cls_rewards_);
 
-  new (this) System(
+  new (this) LoadBalance(
       std::move(n_env), std::move(limits), std::move(states), std::move(n_cls),
       std::move(costs), std::move(arrivals), std::move(departures),
       std::move(env_trans_mats), std::move(normalized_c), std::move(rewards),
@@ -636,35 +639,35 @@ void System::load(cereal::BinaryInputArchive& ar) {
       std::move(t_cls_rewards_));
 }
 
-void System::to_stream(std::ostream& os) const {
+void LoadBalance::to_stream(std::ostream& os) const {
   cereal::BinaryOutputArchive ar(os);
   ar(*this);
 }
 
-System System::from_stream(std::istream& is) {
-  System sys;
+LoadBalance LoadBalance::from_stream(std::istream& is) {
+  LoadBalance sys;
   cereal::BinaryInputArchive ar(is);
   ar(sys);
   return sys;
 }
 
-void System::to_file(const std::string& path) const {
+void LoadBalance::to_file(const std::string& path) const {
   std::ofstream os(path, std::ios::binary);
   to_stream(os);
 }
 
-System System::from_file(const std::string& path) {
+LoadBalance LoadBalance::from_file(const std::string& path) {
   std::ifstream is(path, std::ios::binary);
   return from_stream(is);
 }
 
-std::string System::to_str() const {
+std::string LoadBalance::to_str() const {
   std::stringstream os;
   to_stream(os);
   return os.str();
 }
 
-System System::from_str(const std::string& str) {
+LoadBalance LoadBalance::from_str(const std::string& str) {
   std::stringstream is(str);
   return from_stream(is);
 }

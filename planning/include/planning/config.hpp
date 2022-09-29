@@ -2,10 +2,12 @@
 
 #include <dbg.h>
 
+#include <functional>
 #include <iostream>
 
 #include "Eigen/Dense"
 #include "Eigen/SparseCore"
+#include "planning/xoshiro.hpp"
 #include "unsupported/Eigen/CXX11/Tensor"
 
 static constexpr auto storage_order = Eigen::RowMajor;
@@ -57,3 +59,15 @@ template <typename XprType>
 typename XprType::Scalar to_scalar(const XprType& xpr) {
   return Eigen::Tensor<typename XprType::Scalar, 0, storage_order>(xpr)(0);
 }
+
+using reward_func_type = std::function<float_type(
+    const Tensor2F&, const ConstRowXprAI&, index_type)>;
+using SpMats = std::vector<SpMat>;
+using SpMatU64 = Eigen::SparseMatrix<uint64_t, storage_order, index_type>;
+using SpMatU64s = std::vector<SpMatU64>;
+using dists_type = std::vector<std::discrete_distribution<index_type>>;
+
+static constexpr auto inf_v = std::numeric_limits<float_type>::infinity();
+static constexpr auto eps_v = std::numeric_limits<float_type>::epsilon();
+
+static XoshiroCpp::Xoshiro256Plus rng;
