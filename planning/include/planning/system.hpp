@@ -47,6 +47,7 @@ class System {
   const VectorAS cls_dims;
   const VectorAS cls_action_dims;
 
+  index_type step(index_type current_state, index_type action);
   void step(index_type action);
   void reset(u_int64_t seed);
   void reset_i();
@@ -62,6 +63,8 @@ class System {
                 uint64_t seed);
   void train_q_full(float_type gamma, float_type greedy_eps, uint64_t ls,
                     uint64_t seed);
+
+  void train_q_off(float_type gamma, uint64_t ls, uint64_t seed);
 
   void train_v(float_type gamma);
 

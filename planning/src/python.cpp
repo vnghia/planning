@@ -241,6 +241,7 @@ void make_system(nb::module_ &m) {
       .def("train_q_i", &System::train_q_i)
       .def("train_qs", &System::train_qs)
       .def("train_q_full", &System::train_q_full)
+      .def("train_q_off", &System::train_q_off)
       .def_property_readonly("q",
                              [](const System &self) {
                                return make_return_tensor(
@@ -426,6 +427,7 @@ void make_loadbalance(nb::module_ &m) {
       .def("train_q_i", &LoadBalance::train_q_i)
       .def("train_qs", &LoadBalance::train_qs)
       .def("train_q_full", &LoadBalance::train_q_full)
+      .def("train_q_off", &LoadBalance::train_q_off)
       .def_property_readonly("q",
                              [](const LoadBalance &self) {
                                return make_return_tensor(

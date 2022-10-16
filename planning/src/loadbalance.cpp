@@ -248,6 +248,14 @@ dists_type LoadBalance::init_action_dists() const {
   return res;
 }
 
+index_type LoadBalance::step(index_type current_state, index_type action) {
+  auto next_state_idx =
+      trans_dists_[states.to_sys_action(current_state, action)](rng);
+  return trans_probs[current_state]
+      .innerIndexPtr()[trans_probs[current_state].outerIndexPtr()[action] +
+                       next_state_idx];
+}
+
 void LoadBalance::step(index_type action) {
   auto next_state_idx = trans_dists_[states.to_sys_action(state_, action)](rng);
   state_ = trans_probs[state_]
@@ -399,6 +407,33 @@ void LoadBalance::train_qs(float_type gamma, float_type greedy_eps, uint64_t ls,
 void LoadBalance::train_q_full(float_type gamma, float_type greedy_eps,
                                uint64_t ls, uint64_t seed) {
   train_q_impl<true, true>(gamma, greedy_eps, ls, seed);
+}
+
+void LoadBalance::train_q_off(float_type gamma, uint64_t ls, uint64_t seed) {
+  reset(seed);
+  reset_i();
+  reset_q();
+
+  for (uint64_t i = 0; i < ls; ++i) {
+    for (index_type s = 0; s < states.cls.n; ++s) {
+      for (index_type a = 0; a < n_cls; ++a) {
+        if (!action_masks(s, a)) continue;
+
+        const auto sys_state = states.to_sys(s, 0);
+        const auto reward = rewards[sys_state];
+        const auto next_cls_state = states.to_cls[step(sys_state, a)];
+        const auto next_q = q_.row(next_cls_state).maxCoeff();
+
+        ++n_cls_visit_(s, a);
+        q_(s, a) += (static_cast<float_type>(1) / n_cls_visit_(s, a)) *
+                    (reward + gamma * next_q - q_(s, a));
+      }
+    }
+  }
+
+  for (index_type i = 0; i < states.cls.n; ++i) {
+    q_.row(i).maxCoeff(&q_policy_(i));
+  }
 }
 
 template <bool update_policy_t>
