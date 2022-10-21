@@ -412,6 +412,7 @@ void System::train_q_off(float_type gamma, uint64_t ls, uint64_t seed) {
   reset_i();
   reset_q();
 
+  auto q = q_;
   for (uint64_t i = 0; i < ls; ++i) {
     for (index_type s = 0; s < states.cls.n; ++s) {
       for (index_type a = 0; a < n_cls; ++a) {
@@ -423,10 +424,16 @@ void System::train_q_off(float_type gamma, uint64_t ls, uint64_t seed) {
         const auto next_q = q_.row(next_cls_state).maxCoeff();
 
         ++n_cls_visit_(s, a);
-        q_(s, a) += (static_cast<float_type>(1) / n_cls_visit_(s, a)) *
-                    (reward + gamma * next_q - q_(s, a));
+        q(s, a) = q_(s, a) + (static_cast<float_type>(1) / n_cls_visit_(s, a)) *
+                                 (reward + gamma * next_q - q_(s, a));
       }
     }
+    q_ = q;
+  }
+
+  for (index_type i = 0; i < states.cls.n; ++i) {
+    n_cls_trans_[i].makeCompressed();
+    i_cls_trans_probs_[i].makeCompressed();
   }
 
   for (index_type i = 0; i < states.cls.n; ++i) {
