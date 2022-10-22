@@ -11,7 +11,7 @@ index_type = planning_ext.index_type().dtype
 float_type = planning_ext.float_type().dtype
 
 
-class System(planning_ext.System):
+class Queuing(planning_ext.Queuing):
     def __init__(self, *nargs, **kwargs):
         super().__init__(*nargs, **kwargs)
 

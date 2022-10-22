@@ -10,14 +10,14 @@
 #include "planning/state.hpp"
 #include "unsupported/Eigen/CXX11/Tensor"
 
-class System {
+class Queuing {
  public:
-  System(const index_type n_env, const VectorAI& limits,
-         const float_type* costs, const float_type* arrivals,
-         const float_type* departures, const float_type* env_trans_mats,
-         const reward_func_type& reward_func,
-         const std::optional<float_type>& normalized_c = std::nullopt);
-  System() = default;
+  Queuing(const index_type n_env, const VectorAI& limits,
+          const float_type* costs, const float_type* arrivals,
+          const float_type* departures, const float_type* env_trans_mats,
+          const reward_func_type& reward_func,
+          const std::optional<float_type>& normalized_c = std::nullopt);
+  Queuing() = default;
 
   const index_type n_env{};
   const VectorAI limits;
@@ -86,14 +86,14 @@ class System {
   const auto& t_cls_trans_probs() const { return t_cls_trans_probs_; }
   const auto& t_cls_rewards() const { return t_cls_rewards_; }
 
-  bool operator==(const System& other) const;
+  bool operator==(const Queuing& other) const;
 
   void to_stream(std::ostream& os) const;
-  static System from_stream(std::istream& is);
+  static Queuing from_stream(std::istream& is);
   void to_file(const std::string& path) const;
-  static System from_file(const std::string& path);
+  static Queuing from_file(const std::string& path);
   std::string to_str() const;
-  static System from_str(const std::string& str);
+  static Queuing from_str(const std::string& str);
 
  private:
   dists_type trans_dists_;
@@ -131,20 +131,20 @@ class System {
   template <bool update_policy_t>
   void update_v(float_type gamma, index_type i, const MatrixF& old_v);
 
-  System(index_type&& n_env, VectorAI&& limits, State&& states,
-         index_type&& n_cls, Tensor2F&& costs, Tensor2F&& arrivals,
-         Tensor2F&& departures, Tensor3F&& env_trans_mats,
-         float_type&& normalize_c, VectorAF&& rewards,
-         VectorAB&& env_state_accessible, SpMats&& trans_probs,
-         ArrayB&& action_masks, SpMats&& state_cls_trans_probs,
-         SpMat&& env_trans_probs, VectorAS&& cls_dims,
-         VectorAS&& cls_action_dims, index_type&& state_,
-         ArrayU64&& n_cls_visit_, SpMatU64s&& n_cls_trans_,
-         VectorAF&& cls_cum_rewards_, SpMats&& i_cls_trans_probs_,
-         VectorAF&& i_cls_rewards_, ArrayF&& q_, Tensor3F&& qs_,
-         VectorAI&& q_policy_, VectorMF&& v_, VectorAI&& v_policy_,
-         VectorMF&& t_env_probs_, SpMats&& t_cls_trans_probs_,
-         VectorAF&& t_cls_rewards_);
+  Queuing(index_type&& n_env, VectorAI&& limits, State&& states,
+          index_type&& n_cls, Tensor2F&& costs, Tensor2F&& arrivals,
+          Tensor2F&& departures, Tensor3F&& env_trans_mats,
+          float_type&& normalize_c, VectorAF&& rewards,
+          VectorAB&& env_state_accessible, SpMats&& trans_probs,
+          ArrayB&& action_masks, SpMats&& state_cls_trans_probs,
+          SpMat&& env_trans_probs, VectorAS&& cls_dims,
+          VectorAS&& cls_action_dims, index_type&& state_,
+          ArrayU64&& n_cls_visit_, SpMatU64s&& n_cls_trans_,
+          VectorAF&& cls_cum_rewards_, SpMats&& i_cls_trans_probs_,
+          VectorAF&& i_cls_rewards_, ArrayF&& q_, Tensor3F&& qs_,
+          VectorAI&& q_policy_, VectorMF&& v_, VectorAI&& v_policy_,
+          VectorMF&& t_env_probs_, SpMats&& t_cls_trans_probs_,
+          VectorAF&& t_cls_rewards_);
 
   friend class cereal::access;
   void save(cereal::BinaryOutputArchive& ar) const;
