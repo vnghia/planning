@@ -15,7 +15,7 @@ LoadBalance::LoadBalance(const index_type n_env, const index_type n_cls,
             return res;
           })(),
           Eigen::TensorMap<const Tensor2F>(departures, n_cls, n_env),
-          reward_func, normalized_c,
+          env_trans_mats, reward_func, normalized_c,
           [](const System& system) {
             return to_scalar(system.arrivals.maximum() +
                              system.departures.maximum(std::array{1}).sum() +

@@ -112,7 +112,7 @@ System::System(
                 float_type dummy_prob = this->normalized_c;
                 for (index_type j = 0; j < states.sys.n; ++j) {
                   const auto& s_j = states.sys.a.row(j);
-                  const auto next_to = next_to_func(s_i, s_j, a);
+                  const auto next_to = next_to_func(states, s_i, s_j, a);
                   if (next_to) {
                     float_type prob;
                     const auto n = next_to.value();

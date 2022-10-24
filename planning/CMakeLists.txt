@@ -13,5 +13,5 @@ if(SKBUILD)
   install(TARGETS planning_ext LIBRARY DESTINATION .)
 endif()
 
-add_executable(main src/queuing.cpp src/state.cpp src/loadbalance.cpp src/main.cpp)
+add_executable(main src/queuing.cpp src/state.cpp src/loadbalance.cpp src/system.cpp src/main.cpp)
 target_link_libraries(main planning)
