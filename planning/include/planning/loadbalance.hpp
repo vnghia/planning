@@ -19,5 +19,5 @@ class LoadBalance : System {
               const float_type* env_trans_mats,
               const reward_func_type& reward_func,
               const std::optional<float_type>& normalized_c = std::nullopt);
-  LoadBalance() = default;
+  LoadBalance(const System& system) : System(system) {}
 };

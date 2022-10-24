@@ -18,5 +18,5 @@ class Queuing : System {
           const float_type* arrivals, const float_type* departures,
           const float_type* env_trans_mats, const reward_func_type& reward_func,
           const std::optional<float_type>& normalized_c = std::nullopt);
-  Queuing() = default;
+  Queuing(const System& system) : System(system) {}
 };

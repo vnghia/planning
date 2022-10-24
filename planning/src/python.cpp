@@ -128,137 +128,93 @@ void make_state(nb::module_ &m) {
                              });
 }
 
+using param_type = nb::tensor<nb::numpy, float_type>;
+
 void make_system(nb::module_ &m) {
-  using param_type = nb::tensor<nb::numpy, float_type>;
-
-  auto cls = nb::class_<Queuing>(m, "Queuing");
-
-  static constexpr auto init = [](Queuing *self, index_type n_env,
-                                  nb::tensor<nb::numpy, index_type> limits,
-                                  param_type costs, param_type arrivals,
-                                  param_type departures,
-                                  param_type env_trans_probs,
-                                  Reward reward_type,
-                                  const nb::kwargs &kwargs) {
-    std::optional<float_type> normalized_c =
-        PyDict_GetItemString(kwargs.ptr(), "normalized_c")
-            ? std::make_optional(nb::cast<float_type>(kwargs["normalized_c"]))
-            : std::nullopt;
-
-    auto reward_func = reward_func_type{};
-    switch (reward_type) {
-      case Reward::linear_2:
-        reward_func = linear_reward_2;
-        break;
-      case Reward::convex_2:
-        reward_func = [cost_eps = nb::cast<float_type>(kwargs["cost_eps"])](
-                          const auto &costs, const auto &state,
-                          index_type offset) {
-          return convex_reward_2(costs, state, offset, cost_eps);
-        };
-        break;
-    }
-    new (self)
-        Queuing(n_env,
-                Eigen::Map<VectorAI>(static_cast<index_type *>(limits.data()),
-                                     limits.shape(0)),
-                static_cast<float_type *>(costs.data()),
-                static_cast<float_type *>(arrivals.data()),
-                static_cast<float_type *>(departures.data()),
-                static_cast<float_type *>(env_trans_probs.data()), reward_func,
-                normalized_c);
-  };
-  cls.def("__init__", init);
-
-  static constexpr auto copy_init = [](Queuing *self, const Queuing &other) {
-    new (self) Queuing(other);
-  };
-  cls.def("__init__", copy_init);
+  auto cls = nb::class_<System>(m, "System");
 
   cls.def_property_readonly("n_env",
-                            [](const Queuing &self) { return self.n_env; })
+                            [](const System &self) { return self.n_env; })
       .def_property_readonly(
           "limits",
-          [](const Queuing &self) { return make_return_tensor(self.limits); })
+          [](const System &self) { return make_return_tensor(self.limits); })
       .def_property_readonly(
           "states",
-          [](const Queuing &self) -> const State & { return self.states; })
+          [](const System &self) -> const State & { return self.states; })
       .def_property_readonly("n_cls",
-                             [](const Queuing &self) { return self.n_cls; });
+                             [](const System &self) { return self.n_cls; });
 
   cls.def_property_readonly("costs",
-                            [](const Queuing &self) {
+                            [](const System &self) {
                               return make_return_tensor(self.costs.data(),
                                                         self.n_cls, self.n_env);
                             })
       .def_property_readonly("arrivals",
-                             [](const Queuing &self) {
+                             [](const System &self) {
                                return make_return_tensor(self.arrivals.data(),
                                                          self.n_cls,
                                                          self.n_env);
                              })
       .def_property_readonly("departures",
-                             [](const Queuing &self) {
+                             [](const System &self) {
                                return make_return_tensor(self.departures.data(),
                                                          self.n_cls,
                                                          self.n_env);
                              })
       .def_property_readonly("env_trans_mats",
-                             [](const Queuing &self) {
+                             [](const System &self) {
                                return make_return_tensor(
                                    self.env_trans_mats.data(), self.n_cls,
                                    self.n_env, self.n_env);
                              })
-      .def_property_readonly("normalized_c", [](const Queuing &self) {
-        return self.normalized_c;
-      });
+      .def_property_readonly(
+          "normalized_c", [](const System &self) { return self.normalized_c; });
 
-  cls.def_property_readonly("rewards", [](const Queuing &self) {
+  cls.def_property_readonly("rewards", [](const System &self) {
     return make_return_tensor(self.rewards);
   });
 
   cls.def_property_readonly(
       "trans_probs",
-      [](const Queuing &self) -> const SpMats & { return self.trans_probs; });
+      [](const System &self) -> const SpMats & { return self.trans_probs; });
 
-  cls.def_property_readonly("env_trans_probs",
-                            [](const Queuing &self) -> const SpMat & {
-                              return self.env_trans_probs;
-                            });
+  cls.def_property_readonly(
+      "env_trans_probs",
+      [](const System &self) -> const SpMat & { return self.env_trans_probs; });
 
   cls.def_property_readonly(
          "cls_dims",
-         [](const Queuing &self) { return make_return_tensor(self.cls_dims); })
-      .def_property_readonly("cls_action_dims", [](const Queuing &self) {
+         [](const System &self) { return make_return_tensor(self.cls_dims); })
+      .def_property_readonly("cls_action_dims", [](const System &self) {
         return make_return_tensor(self.cls_action_dims);
       });
 
-  cls.def_property_readonly("n_cls_visit", [](const Queuing &self) {
+  cls.def_property_readonly("n_cls_visit", [](const System &self) {
     return make_return_tensor(self.n_cls_visit().data(),
                               self.cls_action_dims.data(),
                               self.cls_action_dims.size());
   });
 
-  cls.def("train_q", &Queuing::train_q)
-      .def("train_q_i", &Queuing::train_q_i)
-      .def("train_qs", &Queuing::train_qs)
-      .def("train_q_full", &Queuing::train_q_full)
-      .def("train_q_off", &Queuing::train_q_off)
+  cls.def("train_q", &System::train_q)
+      .def("train_q_i", &System::train_q_i)
+      .def("train_qs", &System::train_qs)
+      .def("train_q_full", &System::train_q_full)
+      .def("train_q_off", &System::train_q_off)
       .def_property_readonly("q",
-                             [](const Queuing &self) {
+                             [](const System &self) {
                                return make_return_tensor(
                                    self.q().data(), self.cls_action_dims.data(),
                                    self.cls_action_dims.size());
                              })
       .def_property_readonly("q_policy",
-                             [](const Queuing &self) {
+                             [](const System &self) {
                                return make_return_tensor(self.q_policy().data(),
                                                          self.cls_dims.data(),
                                                          self.cls_dims.size());
                              })
       .def_property_readonly(
           "qs",
-          [](const Queuing &self) {
+          [](const System &self) {
             const auto qs_dims = (VectorAS(self.cls_action_dims.size() + 1)
                                       << self.qs().dimension(0),
                                   self.cls_action_dims)
@@ -267,234 +223,134 @@ void make_system(nb::module_ &m) {
                                       qs_dims.size());
           })
       .def_property_readonly("i_cls_trans_probs",
-                             [](const Queuing &self) -> const SpMats & {
+                             [](const System &self) -> const SpMats & {
                                return self.i_cls_trans_probs();
                              })
-      .def_property_readonly("i_cls_rewards", [](const Queuing &self) {
+      .def_property_readonly("i_cls_rewards", [](const System &self) {
         return make_return_tensor(self.i_cls_rewards());
       });
 
-  cls.def("train_v", &Queuing::train_v)
+  cls.def("train_v", &System::train_v)
       .def_property_readonly("v",
-                             [](const Queuing &self) {
+                             [](const System &self) {
                                return make_return_tensor(self.v().data(),
                                                          self.cls_dims.data(),
                                                          self.cls_dims.size());
                              })
-      .def_property_readonly("v_policy", [](const Queuing &self) {
+      .def_property_readonly("v_policy", [](const System &self) {
         return make_return_tensor(self.v_policy().data(), self.cls_dims.data(),
                                   self.cls_dims.size());
       });
 
-  cls.def("train_t", &Queuing::train_t)
+  cls.def("train_t", &System::train_t)
       .def_property_readonly("t_env_probs",
-                             [](const Queuing &self) {
+                             [](const System &self) {
                                return make_return_tensor(self.t_env_probs());
                              })
       .def_property_readonly("t_cls_trans_probs",
-                             [](const Queuing &self) -> const SpMats & {
+                             [](const System &self) -> const SpMats & {
                                return self.t_cls_trans_probs();
                              })
-      .def_property_readonly("t_cls_rewards", [](const Queuing &self) {
+      .def_property_readonly("t_cls_rewards", [](const System &self) {
         return make_return_tensor(self.t_cls_rewards());
       });
 
-  cls.def("to_file", &Queuing::to_file)
-      .def_static("from_file", &Queuing::from_file)
+  cls.def("to_file", &System::to_file)
+      .def_static("from_file", &System::from_file)
       .def("to_str",
-           [](const Queuing &self) { return nb::bytes(self.to_str()); })
+           [](const System &self) { return nb::bytes(self.to_str()); })
       .def_static("from_str",
-                  [](const nb::bytes &str) { return Queuing::from_str(str); })
-      .def("__eq__", [](const Queuing &self, const Queuing &other) {
+                  [](const nb::bytes &str) { return System::from_str(str); })
+      .def("__eq__", [](const System &self, const System &other) {
         return self == other;
       });
 }
 
-void make_loadbalance(nb::module_ &m) {
-  using param_type = nb::tensor<nb::numpy, float_type>;
+void make_queuing(nb::module_ &m) {
+  auto cls = nb::class_<Queuing, System>(m, "Queuing");
+  static constexpr auto init =
+      [](Queuing *self, index_type n_env, index_type n_cls,
+         nb::tensor<nb::numpy, index_type> limits, param_type costs,
+         param_type arrivals, param_type departures, param_type env_trans_probs,
+         Reward reward_type, const nb::kwargs &kwargs) {
+        std::optional<float_type> normalized_c =
+            PyDict_GetItemString(kwargs.ptr(), "normalized_c")
+                ? std::make_optional(
+                      nb::cast<float_type>(kwargs["normalized_c"]))
+                : std::nullopt;
 
-  auto cls = nb::class_<LoadBalance>(m, "LoadBalance");
-
-  static constexpr auto init = [](LoadBalance *self, index_type n_env,
-                                  nb::tensor<nb::numpy, index_type> limits,
-                                  param_type costs, param_type arrivals,
-                                  param_type departures,
-                                  param_type env_trans_probs,
-                                  Reward reward_type,
-                                  const nb::kwargs &kwargs) {
-    std::optional<float_type> normalized_c =
-        PyDict_GetItemString(kwargs.ptr(), "normalized_c")
-            ? std::make_optional(nb::cast<float_type>(kwargs["normalized_c"]))
-            : std::nullopt;
-
-    auto reward_func = reward_func_type{};
-    switch (reward_type) {
-      case Reward::linear_2:
-        reward_func = linear_reward_2;
-        break;
-      case Reward::convex_2:
-        reward_func = [cost_eps = nb::cast<float_type>(kwargs["cost_eps"])](
-                          const auto &costs, const auto &state,
-                          index_type offset) {
-          return convex_reward_2(costs, state, offset, cost_eps);
-        };
-        break;
-    }
-    new (self) LoadBalance(
-        n_env,
-        Eigen::Map<VectorAI>(static_cast<index_type *>(limits.data()),
-                             limits.shape(0)),
-        static_cast<float_type *>(costs.data()),
-        static_cast<float_type *>(arrivals.data()),
-        static_cast<float_type *>(departures.data()),
-        static_cast<float_type *>(env_trans_probs.data()), reward_func,
-        normalized_c);
-  };
+        auto reward_func = reward_func_type{};
+        switch (reward_type) {
+          case Reward::linear_2:
+            reward_func = linear_reward_2;
+            break;
+          case Reward::convex_2:
+            reward_func = [cost_eps = nb::cast<float_type>(kwargs["cost_eps"])](
+                              const auto &costs, const auto &state,
+                              index_type offset) {
+              return convex_reward_2(costs, state, offset, cost_eps);
+            };
+            break;
+        }
+        new (self) Queuing(
+            n_env, n_cls,
+            Eigen::Map<VectorAI>(static_cast<index_type *>(limits.data()),
+                                 limits.shape(0)),
+            static_cast<float_type *>(costs.data()),
+            static_cast<float_type *>(arrivals.data()),
+            static_cast<float_type *>(departures.data()),
+            static_cast<float_type *>(env_trans_probs.data()), reward_func,
+            normalized_c);
+      };
   cls.def("__init__", init);
 
-  static constexpr auto copy_init = [](LoadBalance *self,
-                                       const LoadBalance &other) {
+  static constexpr auto copy_init = [](Queuing *self, const System &other) {
+    new (self) Queuing(other);
+  };
+  cls.def("__init__", copy_init);
+}
+
+void make_loadbalance(nb::module_ &m) {
+  auto cls = nb::class_<LoadBalance, System>(m, "LoadBalance");
+  static constexpr auto init =
+      [](LoadBalance *self, index_type n_env, index_type n_cls,
+         nb::tensor<nb::numpy, index_type> limits, param_type costs,
+         float_type arrival, param_type departures, param_type env_trans_probs,
+         Reward reward_type, const nb::kwargs &kwargs) {
+        std::optional<float_type> normalized_c =
+            PyDict_GetItemString(kwargs.ptr(), "normalized_c")
+                ? std::make_optional(
+                      nb::cast<float_type>(kwargs["normalized_c"]))
+                : std::nullopt;
+
+        auto reward_func = reward_func_type{};
+        switch (reward_type) {
+          case Reward::linear_2:
+            reward_func = linear_reward_2;
+            break;
+          case Reward::convex_2:
+            reward_func = [cost_eps = nb::cast<float_type>(kwargs["cost_eps"])](
+                              const auto &costs, const auto &state,
+                              index_type offset) {
+              return convex_reward_2(costs, state, offset, cost_eps);
+            };
+            break;
+        }
+        new (self) LoadBalance(
+            n_env, n_cls,
+            Eigen::Map<VectorAI>(static_cast<index_type *>(limits.data()),
+                                 limits.shape(0)),
+            static_cast<float_type *>(costs.data()), arrival,
+            static_cast<float_type *>(departures.data()),
+            static_cast<float_type *>(env_trans_probs.data()), reward_func,
+            normalized_c);
+      };
+  cls.def("__init__", init);
+
+  static constexpr auto copy_init = [](LoadBalance *self, const System &other) {
     new (self) LoadBalance(other);
   };
   cls.def("__init__", copy_init);
-
-  cls.def_property_readonly("n_env",
-                            [](const LoadBalance &self) { return self.n_env; })
-      .def_property_readonly("limits",
-                             [](const LoadBalance &self) {
-                               return make_return_tensor(self.limits);
-                             })
-      .def_property_readonly(
-          "states",
-          [](const LoadBalance &self) -> const State & { return self.states; })
-      .def_property_readonly(
-          "n_cls", [](const LoadBalance &self) { return self.n_cls; });
-
-  cls.def_property_readonly("costs",
-                            [](const LoadBalance &self) {
-                              return make_return_tensor(self.costs.data(),
-                                                        self.n_cls, self.n_env);
-                            })
-      .def_property_readonly("arrivals",
-                             [](const LoadBalance &self) {
-                               return make_return_tensor(self.arrivals.data(),
-                                                         self.n_cls,
-                                                         self.n_env);
-                             })
-      .def_property_readonly("departures",
-                             [](const LoadBalance &self) {
-                               return make_return_tensor(self.departures.data(),
-                                                         self.n_cls,
-                                                         self.n_env);
-                             })
-      .def_property_readonly("env_trans_mats",
-                             [](const LoadBalance &self) {
-                               return make_return_tensor(
-                                   self.env_trans_mats.data(), self.n_cls,
-                                   self.n_env, self.n_env);
-                             })
-      .def_property_readonly("normalized_c", [](const LoadBalance &self) {
-        return self.normalized_c;
-      });
-
-  cls.def_property_readonly("rewards", [](const LoadBalance &self) {
-    return make_return_tensor(self.rewards);
-  });
-
-  cls.def_property_readonly("trans_probs",
-                            [](const LoadBalance &self) -> const SpMats & {
-                              return self.trans_probs;
-                            });
-
-  cls.def_property_readonly("env_trans_probs",
-                            [](const LoadBalance &self) -> const SpMat & {
-                              return self.env_trans_probs;
-                            });
-
-  cls.def_property_readonly("cls_dims",
-                            [](const LoadBalance &self) {
-                              return make_return_tensor(self.cls_dims);
-                            })
-      .def_property_readonly("cls_action_dims", [](const LoadBalance &self) {
-        return make_return_tensor(self.cls_action_dims);
-      });
-
-  cls.def_property_readonly("n_cls_visit", [](const LoadBalance &self) {
-    return make_return_tensor(self.n_cls_visit().data(),
-                              self.cls_action_dims.data(),
-                              self.cls_action_dims.size());
-  });
-
-  cls.def("train_q", &LoadBalance::train_q)
-      .def("train_q_i", &LoadBalance::train_q_i)
-      .def("train_qs", &LoadBalance::train_qs)
-      .def("train_q_full", &LoadBalance::train_q_full)
-      .def("train_q_off", &LoadBalance::train_q_off)
-      .def_property_readonly("q",
-                             [](const LoadBalance &self) {
-                               return make_return_tensor(
-                                   self.q().data(), self.cls_action_dims.data(),
-                                   self.cls_action_dims.size());
-                             })
-      .def_property_readonly("q_policy",
-                             [](const LoadBalance &self) {
-                               return make_return_tensor(self.q_policy().data(),
-                                                         self.cls_dims.data(),
-                                                         self.cls_dims.size());
-                             })
-      .def_property_readonly(
-          "qs",
-          [](const LoadBalance &self) {
-            const auto qs_dims = (VectorAS(self.cls_action_dims.size() + 1)
-                                      << self.qs().dimension(0),
-                                  self.cls_action_dims)
-                                     .finished();
-            return make_return_tensor(self.qs().data(), qs_dims.data(),
-                                      qs_dims.size());
-          })
-      .def_property_readonly("i_cls_trans_probs",
-                             [](const LoadBalance &self) -> const SpMats & {
-                               return self.i_cls_trans_probs();
-                             })
-      .def_property_readonly("i_cls_rewards", [](const LoadBalance &self) {
-        return make_return_tensor(self.i_cls_rewards());
-      });
-
-  cls.def("train_v", &LoadBalance::train_v)
-      .def_property_readonly("v",
-                             [](const LoadBalance &self) {
-                               return make_return_tensor(self.v().data(),
-                                                         self.cls_dims.data(),
-                                                         self.cls_dims.size());
-                             })
-      .def_property_readonly("v_policy", [](const LoadBalance &self) {
-        return make_return_tensor(self.v_policy().data(), self.cls_dims.data(),
-                                  self.cls_dims.size());
-      });
-
-  cls.def("train_t", &LoadBalance::train_t)
-      .def_property_readonly("t_env_probs",
-                             [](const LoadBalance &self) {
-                               return make_return_tensor(self.t_env_probs());
-                             })
-      .def_property_readonly("t_cls_trans_probs",
-                             [](const LoadBalance &self) -> const SpMats & {
-                               return self.t_cls_trans_probs();
-                             })
-      .def_property_readonly("t_cls_rewards", [](const LoadBalance &self) {
-        return make_return_tensor(self.t_cls_rewards());
-      });
-
-  cls.def("to_file", &LoadBalance::to_file)
-      .def_static("from_file", &LoadBalance::from_file)
-      .def("to_str",
-           [](const LoadBalance &self) { return nb::bytes(self.to_str()); })
-      .def_static(
-          "from_str",
-          [](const nb::bytes &str) { return LoadBalance::from_str(str); })
-      .def("__eq__", [](const LoadBalance &self, const LoadBalance &other) {
-        return self == other;
-      });
 }
 
 NB_MODULE(planning_ext, m) {
@@ -510,5 +366,6 @@ NB_MODULE(planning_ext, m) {
 
   make_state(m);
   make_system(m);
+  make_queuing(m);
   make_loadbalance(m);
 }
