@@ -53,13 +53,6 @@ class State {
 
   index_type to_sys_action(index_type i, index_type a) const;
 
-  std::optional<index_type> next_to_up(const ConstRowXprAI& s1,
-                                       const ConstRowXprAI& s2,
-                                       index_type a) const;
-  std::optional<index_type> next_to_down(const ConstRowXprAI& s1,
-                                         const ConstRowXprAI& s2,
-                                         index_type a) const;
-
   bool operator==(const State& other) const;
 
  private:
