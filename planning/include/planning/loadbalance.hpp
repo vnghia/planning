@@ -11,7 +11,7 @@
 #include "planning/system.hpp"
 #include "unsupported/Eigen/CXX11/Tensor"
 
-class LoadBalance : System {
+class LoadBalance : public System {
  public:
   LoadBalance(const index_type n_env, const index_type n_cls,
               const VectorAI& limits, const float_type* costs,
