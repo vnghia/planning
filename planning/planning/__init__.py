@@ -28,8 +28,8 @@ class System(planning_ext.System):
 
         ax = plt.axes()
         fig = ax.get_figure()
-        cmap = colors.ListedColormap(["lightgray", "black"])
-        bounds = [0, 1, 2]
+        cmap = colors.ListedColormap(["#e5e5e5", "black", "#7f7f7f"])
+        bounds = [0, 1, 2, 3]
         norm = colors.BoundaryNorm(bounds, cmap.N)
         mat = ax.matshow(policy, cmap=cmap, norm=norm)
         fig.colorbar(mat, cmap=cmap, boundaries=bounds, ticks=bounds[:-1])
