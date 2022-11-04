@@ -27,9 +27,8 @@ bool operator==(const Eigen::SparseCompressedBase<Derived>& lhs,
 }
 
 template <typename Derived>
-requires std::derived_from<Derived, Eigen::SparseCompressedBase<Derived>>
-bool sps_equal(const std::vector<Derived>& lhs,
-               const std::vector<Derived>& rhs) {
+  requires std::derived_from<Derived, Eigen::SparseCompressedBase<Derived>> bool
+sps_equal(const std::vector<Derived>& lhs, const std::vector<Derived>& rhs) {
   return (lhs.size() == rhs.size()) &&
          std::equal(lhs.begin(), lhs.end(), rhs.begin(),
                     [](const Eigen::SparseCompressedBase<Derived>& lhs,
@@ -410,14 +409,17 @@ void System::train_q_off(float_type gamma, uint64_t ls, uint64_t seed) {
   reset_q();
 
   auto q = q_;
+  index_type e = 0;
   for (uint64_t i = 0; i < ls; ++i) {
     for (index_type s = 0; s < states.cls.n; ++s) {
       for (index_type a = 0; a < n_cls; ++a) {
         if (!action_masks(s, a)) continue;
 
-        const auto sys_state = states.to_sys(s, 0);
+        const auto sys_state = states.to_sys(s, e);
         const auto reward = rewards[sys_state];
-        const auto next_cls_state = states.to_cls[step(sys_state, a)];
+        const auto next_state = step(sys_state, a);
+        const auto next_cls_state = states.to_cls[next_state];
+        e = states.to_env[next_state];
         const auto next_q = q_.row(next_cls_state).maxCoeff();
 
         ++n_cls_visit_(s, a);
