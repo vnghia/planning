@@ -22,7 +22,7 @@ static constexpr auto make_return_tensor(const data_type *data,
 }
 
 template <typename data_type, std::convertible_to<size_t>... size_types>
-requires std::is_scalar_v<data_type>
+  requires std::is_scalar_v<data_type>
 static constexpr auto make_return_tensor(const data_type *data,
                                          size_types... sizes) {
   std::array dims{static_cast<size_t>(sizes)...};
@@ -35,17 +35,10 @@ static constexpr auto make_return_tensor(const auto &v) {
 
 namespace nanobind {
 
-struct bytes : std::string {
-  using std::string::string;
-
-  bytes(const std::string &str) : std::string(str) {}
-  bytes(std::string &&str) : std::string(str) {}
-};
-
 namespace detail {
 
 template <typename Type>
-requires std::derived_from<Type, Eigen::SparseCompressedBase<Type>>
+  requires std::derived_from<Type, Eigen::SparseCompressedBase<Type>>
 struct type_caster<Type> {
   using Scalar = typename Type::Scalar;
   using StorageIndex = typename Type::StorageIndex;
@@ -71,28 +64,6 @@ struct type_caster<Type> {
                                       value.outerSize() + 1)),
                nb::make_tuple(value.rows(), value.cols()))
         .release();
-  }
-};
-
-template <>
-struct type_caster<bytes> {
-  NB_TYPE_CASTER(bytes, (const_name("bytes")));
-
-  bool from_python(handle src, uint8_t, cleanup_list *) noexcept {
-    Py_ssize_t size;
-    char *str;
-    const int status = PyBytes_AsStringAndSize(src.ptr(), &str, &size);
-    if (status == -1) {
-      PyErr_Clear();
-      return false;
-    }
-    value = bytes(str, (size_t)size);
-    return true;
-  }
-
-  static handle from_cpp(const bytes &value, rv_policy,
-                         cleanup_list *) noexcept {
-    return PyBytes_FromStringAndSize(value.c_str(), value.size());
   }
 };
 
@@ -258,9 +229,9 @@ void make_system(nb::module_ &m) {
   cls.def("to_file", &System::to_file)
       .def_static("from_file", &System::from_file)
       .def("to_str",
-           [](const System &self) { return nb::bytes(self.to_str()); })
+           [](const System &self) { return nb::bytes(self.to_str().c_str()); })
       .def_static("from_str",
-                  [](const nb::bytes &str) { return System::from_str(str); })
+                  [](nb::bytes &str) { return System::from_str(str.c_str()); })
       .def("__eq__", [](const System &self, const System &other) {
         return self == other;
       });
