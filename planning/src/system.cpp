@@ -307,7 +307,7 @@ void System::reset_t() {
   t_cls_rewards_.setZero();
 }
 
-template <bool log_i_t, bool log_qs_t>
+template <bool log_i_t, bool log_qs_t, bool log_state>
 void System::train_q_impl(float_type gamma, float_type greedy_eps, uint64_t ls,
                           uint64_t seed) {
   reset(seed);
@@ -316,14 +316,24 @@ void System::train_q_impl(float_type gamma, float_type greedy_eps, uint64_t ls,
 
   static constexpr uint64_t qs_limit = 1000;
   const uint64_t qs_step = std::ceil(ls / static_cast<float_type>(qs_limit));
+  static constexpr uint64_t q_state_limit = 500000000;
 
   if constexpr (log_qs_t) {
     qs_ = Tensor3F(std::min(ls, qs_limit) + (ls % qs_step == 0 && qs_step != 1),
                    states.cls.n, n_cls);
   }
 
+  if constexpr (log_state) {
+    q_states_ = ArrayU8(std::min(ls, q_state_limit), n_cls);
+  }
+
   for (index_type i = 0; i < ls; ++i) {
     const auto cls_state = states.to_cls[state_];
+    if constexpr (log_state) {
+      if (i < q_states_.rows()) {
+        q_states_.row(i) = states.cls.a.row(cls_state).cast<uint8_t>();
+      }
+    }
 
     index_type a;
     if (q_greedy_dis_(rng) < greedy_eps) {
@@ -386,22 +396,27 @@ void System::train_q_impl(float_type gamma, float_type greedy_eps, uint64_t ls,
 
 void System::train_q(float_type gamma, float_type greedy_eps, uint64_t ls,
                      uint64_t seed) {
-  train_q_impl<false, false>(gamma, greedy_eps, ls, seed);
+  train_q_impl<false, false, false>(gamma, greedy_eps, ls, seed);
 }
 
 void System::train_q_i(float_type gamma, float_type greedy_eps, uint64_t ls,
                        uint64_t seed) {
-  train_q_impl<true, false>(gamma, greedy_eps, ls, seed);
+  train_q_impl<true, false, false>(gamma, greedy_eps, ls, seed);
 }
 
 void System::train_qs(float_type gamma, float_type greedy_eps, uint64_t ls,
                       uint64_t seed) {
-  train_q_impl<false, true>(gamma, greedy_eps, ls, seed);
+  train_q_impl<false, true, false>(gamma, greedy_eps, ls, seed);
 }
 
 void System::train_q_full(float_type gamma, float_type greedy_eps, uint64_t ls,
                           uint64_t seed) {
-  train_q_impl<true, true>(gamma, greedy_eps, ls, seed);
+  train_q_impl<true, true, false>(gamma, greedy_eps, ls, seed);
+}
+
+void System::train_q_states(float_type gamma, float_type greedy_eps,
+                            uint64_t ls, uint64_t seed) {
+  train_q_impl<false, false, true>(gamma, greedy_eps, ls, seed);
 }
 
 void System::train_q_off(float_type gamma, uint64_t ls, uint64_t seed) {
@@ -548,6 +563,7 @@ bool System::operator==(const System& other) const {
          sps_equal(i_cls_trans_probs_, other.i_cls_trans_probs_) &&
          (i_cls_rewards_ == other.i_cls_rewards_).all() &&
          (q_ == other.q_).all() && to_scalar((qs_ == other.qs_).all()) &&
+         (q_states_ == other.q_states_).all() &&
          (q_policy_ == other.q_policy_).all() &&
          (q_greedy_dis_ == other.q_greedy_dis_) && (v_ == other.v_) &&
          (v_policy_ == other.v_policy_).all() &&
@@ -567,9 +583,9 @@ System::System(index_type&& n_env, VectorAI&& limits, State&& states,
                ArrayU64&& n_cls_visit_, SpMatU64s&& n_cls_trans_,
                VectorAF&& cls_cum_rewards_, SpMats&& i_cls_trans_probs_,
                VectorAF&& i_cls_rewards_, ArrayF&& q_, Tensor3F&& qs_,
-               VectorAI&& q_policy_, VectorMF&& v_, VectorAI&& v_policy_,
-               VectorMF&& t_env_probs_, SpMats&& t_cls_trans_probs_,
-               VectorAF&& t_cls_rewards_)
+               ArrayU8&& q_states_, VectorAI&& q_policy_, VectorMF&& v_,
+               VectorAI&& v_policy_, VectorMF&& t_env_probs_,
+               SpMats&& t_cls_trans_probs_, VectorAF&& t_cls_rewards_)
     : n_env(n_env),
       limits(limits),
       states(states),
@@ -597,6 +613,7 @@ System::System(index_type&& n_env, VectorAI&& limits, State&& states,
       i_cls_rewards_(i_cls_rewards_),
       q_(q_),
       qs_(qs_),
+      q_states_(q_states_),
       q_policy_(q_policy_),
       v_(v_),
       v_policy_(v_policy_),
@@ -609,7 +626,7 @@ void System::save(cereal::BinaryOutputArchive& ar) const {
      normalized_c, rewards, env_state_accessible, trans_probs, action_masks,
      state_cls_trans_probs, env_trans_probs, cls_dims, cls_action_dims, state_,
      n_cls_visit_, n_cls_trans_, cls_cum_rewards_, i_cls_trans_probs_,
-     i_cls_rewards_, q_, qs_, q_policy_, v_, v_policy_, t_env_probs_,
+     i_cls_rewards_, q_, qs_, q_states_, q_policy_, v_, v_policy_, t_env_probs_,
      t_cls_trans_probs_, t_cls_rewards_);
 }
 
@@ -650,6 +667,7 @@ void System::load(cereal::BinaryInputArchive& ar) {
 
   ArrayF q_;
   Tensor3F qs_;
+  ArrayU8 q_states_;
   VectorAI q_policy_;
 
   VectorMF v_;
@@ -663,7 +681,7 @@ void System::load(cereal::BinaryInputArchive& ar) {
      normalized_c, rewards, env_state_accessible, trans_probs, action_masks,
      state_cls_trans_probs, env_trans_probs, cls_dims, cls_action_dims, state_,
      n_cls_visit_, n_cls_trans_, cls_cum_rewards_, i_cls_trans_probs_,
-     i_cls_rewards_, q_, qs_, q_policy_, v_, v_policy_, t_env_probs_,
+     i_cls_rewards_, q_, qs_, q_states_, q_policy_, v_, v_policy_, t_env_probs_,
      t_cls_trans_probs_, t_cls_rewards_);
 
   new (this) System(
@@ -676,9 +694,9 @@ void System::load(cereal::BinaryInputArchive& ar) {
       std::move(cls_action_dims), std::move(state_), std::move(n_cls_visit_),
       std::move(n_cls_trans_), std::move(cls_cum_rewards_),
       std::move(i_cls_trans_probs_), std::move(i_cls_rewards_), std::move(q_),
-      std::move(qs_), std::move(q_policy_), std::move(v_), std::move(v_policy_),
-      std::move(t_env_probs_), std::move(t_cls_trans_probs_),
-      std::move(t_cls_rewards_));
+      std::move(qs_), std::move(q_states_), std::move(q_policy_), std::move(v_),
+      std::move(v_policy_), std::move(t_env_probs_),
+      std::move(t_cls_trans_probs_), std::move(t_cls_rewards_));
 }
 
 void System::to_stream(std::ostream& os) const {

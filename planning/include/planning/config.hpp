@@ -46,6 +46,13 @@ using ArrayU64 =
 using VectorMU64 = Eigen::Matrix<uint64_t, 1, Eigen::Dynamic, storage_order>;
 using VectorAU64 = Eigen::Array<uint64_t, 1, Eigen::Dynamic, storage_order>;
 
+using MatrixU8 =
+    Eigen::Matrix<uint8_t, Eigen::Dynamic, Eigen::Dynamic, storage_order>;
+using ArrayU8 =
+    Eigen::Array<uint8_t, Eigen::Dynamic, Eigen::Dynamic, storage_order>;
+using VectorMU8 = Eigen::Matrix<uint8_t, 1, Eigen::Dynamic, storage_order>;
+using VectorAU8 = Eigen::Array<uint8_t, 1, Eigen::Dynamic, storage_order>;
+
 using SpMat = Eigen::SparseMatrix<float_type, storage_order, index_type>;
 using SpMatIt = typename SpMat::InnerIterator;
 

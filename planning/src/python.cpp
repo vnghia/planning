@@ -170,12 +170,13 @@ void make_system(nb::module_ &m) {
       .def("train_q_i", &System::train_q_i)
       .def("train_qs", &System::train_qs)
       .def("train_q_full", &System::train_q_full)
+      .def("train_q_states", &System::train_q_states)
       .def("train_q_off", &System::train_q_off)
-      .def_property_readonly("q",
+      .def_property_readonly("q_states",
                              [](const System &self) {
-                               return make_return_tensor(
-                                   self.q().data(), self.cls_action_dims.data(),
-                                   self.cls_action_dims.size());
+                               return make_return_tensor(self.q_states().data(),
+                                                         self.q_states().rows(),
+                                                         self.n_cls);
                              })
       .def_property_readonly("q_policy",
                              [](const System &self) {

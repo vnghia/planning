@@ -74,6 +74,8 @@ class System {
                 uint64_t seed);
   void train_q_full(float_type gamma, float_type greedy_eps, uint64_t ls,
                     uint64_t seed);
+  void train_q_states(float_type gamma, float_type greedy_eps, uint64_t ls,
+                      uint64_t seed);
 
   void train_q_off(float_type gamma, uint64_t ls, uint64_t seed);
 
@@ -88,6 +90,7 @@ class System {
 
   const auto& q() const { return q_; }
   const auto& q_policy() const { return q_policy_; }
+  const auto& q_states() const { return q_states_; }
   const auto& qs() const { return qs_; }
 
   const auto& v() const { return v_; }
@@ -120,6 +123,7 @@ class System {
 
   ArrayF q_;
   Tensor3F qs_;
+  ArrayU8 q_states_;
   VectorAI q_policy_;
   std::uniform_real_distribution<float_type> q_greedy_dis_;
 
@@ -135,7 +139,7 @@ class System {
 
   void reset_cls_trans_probs(SpMats& mats) const;
 
-  template <bool log_i_t, bool log_qs_t>
+  template <bool log_i_t, bool log_qs_t, bool log_state>
   void train_q_impl(float_type gamma, float_type greedy_eps, uint64_t ls,
                     uint64_t seed);
 
@@ -153,9 +157,9 @@ class System {
          ArrayU64&& n_cls_visit_, SpMatU64s&& n_cls_trans_,
          VectorAF&& cls_cum_rewards_, SpMats&& i_cls_trans_probs_,
          VectorAF&& i_cls_rewards_, ArrayF&& q_, Tensor3F&& qs_,
-         VectorAI&& q_policy_, VectorMF&& v_, VectorAI&& v_policy_,
-         VectorMF&& t_env_probs_, SpMats&& t_cls_trans_probs_,
-         VectorAF&& t_cls_rewards_);
+         ArrayU8&& q_states_, VectorAI&& q_policy_, VectorMF&& v_,
+         VectorAI&& v_policy_, VectorMF&& t_env_probs_,
+         SpMats&& t_cls_trans_probs_, VectorAF&& t_cls_rewards_);
 
   friend class cereal::access;
   void save(cereal::BinaryOutputArchive& ar) const;
