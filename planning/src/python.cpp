@@ -280,6 +280,9 @@ void make_queuing(nb::module_ &m) {
     new (self) Queuing(other);
   };
   cls.def("__init__", copy_init);
+  cls.def("__eq__", [](const Queuing &self, const Queuing &other) {
+    return self == other;
+  });
 }
 
 void make_loadbalance(nb::module_ &m) {
@@ -323,6 +326,9 @@ void make_loadbalance(nb::module_ &m) {
     new (self) LoadBalance(other);
   };
   cls.def("__init__", copy_init);
+  cls.def("__eq__", [](const LoadBalance &self, const LoadBalance &other) {
+    return self == other;
+  });
 }
 
 NB_MODULE(planning_ext, m) {

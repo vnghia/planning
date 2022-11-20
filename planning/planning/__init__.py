@@ -3,22 +3,24 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.subplots as sp
 from matplotlib import colors
+from planning.planning_ext import Reward
 
 from planning import planning_ext
-from planning.planning_ext import Reward
 
 index_type = planning_ext.index_type().dtype
 float_type = planning_ext.float_type().dtype
 
 
-class System(planning_ext.System):
-    @classmethod
+def add_system_helper(original_cls):
     def from_file(cls, path):
-        return cls(super().from_file(path))
+        return cls(super(original_cls, cls).from_file(path))
 
-    @classmethod
+    original_cls.from_file = classmethod(from_file)
+
     def from_str(cls, content):
-        return cls(super().from_str(content))
+        return cls(super(original_cls, cls).from_str(content))
+
+    original_cls.from_str = classmethod(from_str)
 
     def show_policy(self, algo="q", info=""):
         if self.n_cls != 2:
@@ -43,6 +45,8 @@ class System(planning_ext.System):
         ax.set_title(f"policy_{algo}{info}")
         plt.show()
 
+    original_cls.show_policy = show_policy
+
     def show_qs(self, index=None, info=""):
         if self.n_cls != 2:
             return
@@ -59,6 +63,8 @@ class System(planning_ext.System):
                 l2 = index[1] if index and len(index) > 1 else j
                 plt.title(f"L1 = {l1} & L2 = {l2}{info}")
                 plt.show()
+
+    original_cls.show_qs = show_qs
 
     def show_n_cls_visit(self, info=""):
         if self.n_cls != 2:
@@ -146,8 +152,18 @@ class System(planning_ext.System):
         fig.update_layout(title_text=info)
         fig.show()
 
+    original_cls.show_n_cls_visit = show_n_cls_visit
 
-class Queuing(planning_ext.Queuing, System):
+    def __eq__(self, rhs):
+        return super(original_cls, self).__eq__(rhs)
+
+    original_cls.__eq__ = __eq__
+
+    return original_cls
+
+
+@add_system_helper
+class Queuing(planning_ext.Queuing):
     def __init__(self, *nargs, **kwargs):
         super().__init__(*nargs, **kwargs)
 
@@ -177,7 +193,8 @@ class Queuing(planning_ext.Queuing, System):
         )
 
 
-class LoadBalance(planning_ext.LoadBalance, System):
+@add_system_helper
+class LoadBalance(planning_ext.LoadBalance):
     def __init__(self, *nargs, **kwargs):
         super().__init__(*nargs, **kwargs)
 
